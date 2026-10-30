@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NeuroDesk · 你的桌面专注伙伴</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='42' fill='%23a78bfa'/%3E%3Ccircle cx='36' cy='46' r='7' fill='%23fff'/%3E%3Ccircle cx='64' cy='46' r='7' fill='%23fff'/%3E%3C/svg%3E" />
+</head>
+<body data-view="overview">
+  <aside class="sidebar">
+    <div class="side-brand"><span class="side-mark">n<span>·</span></span><div>NeuroDesk<small>留一点精力，给生活。</small></div></div>
+    <div class="nav-caption">你的工作空间</div>
+    <nav aria-label="工作台导航">
+      <button data-view="overview" aria-current="page"><span>◫</span>今日概览<small>01</small></button>
+      <button data-view="companion" aria-current="false"><span>♧</span>桌面伙伴<small>02</small></button>
+      <button data-view="insights" aria-current="false"><span>⌁</span>感知数据<small>03</small></button>
+      <button data-view="desk" aria-current="false"><span>☷</span>工位与提醒<small>04</small></button>
+    </nav>
+    <div class="side-bottom"><span class="side-status"><i></i><b id="runtime-label">桌面应用</b></span><p id="background-note">面板关闭后仍在后台守护，点击桌宠随时回来。</p><span class="side-version">NEURODESK / 0.2</span></div>
+  </aside>
+  <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+  <div id="tint" class="tint" aria-hidden="true"></div>
+
+  <header class="topbar glass">
+    <div class="brand">
+      <div><small class="eyebrow">YOUR DAILY SPACE</small><h1>今天，也按自己的节奏来。</h1></div>
+    </div>
+    <div class="chips" role="status">
+      <span class="chip" id="chip-cam"><i></i>准备监测</span>
+      <span class="chip" id="chip-eeg"><i></i>EEG 加载中</span>
+      <span class="chip" id="chip-mqtt"><i></i>MQTT 未连接</span>
+    </div>
+    <div class="actions">
+      <div class="seg" role="radiogroup" aria-label="数据模式">
+        <button role="radio" aria-checked="true" data-mode="sense">日常守护</button>
+        <button role="radio" aria-checked="false" data-mode="demo">效果演示</button>
+      </div>
+      <button class="btn ghost" id="btn-calib" disabled>校准</button>
+      <button class="btn ghost" id="btn-pip" title="显示桌面宠物，点击宠物打开工作台">显示桌宠 ↗</button>
+      <button class="icon-btn" id="btn-sound" aria-pressed="true" title="宠物声音">🔊</button>
+      <button class="icon-btn" id="btn-settings" title="设置">⚙</button>
+      <button class="btn primary" id="btn-start">开始监测</button>
+      <button class="icon-btn" id="btn-hide-panel" title="收起面板，继续后台监测" aria-label="收起面板">−</button>
+    </div>
+  </header>
+
+  <main class="grid">
+    <section class="welcome-strip"><div><span class="section-kicker">A LITTLE CARE, EVERY DAY</span><h2 id="monitor-title">给自己一点专注的时间</h2><p id="monitor-detail">开始监测后，我会在你疲劳时轻轻提醒</p></div><div class="welcome-decoration" aria-hidden="true"><span>✳</span><small>慢慢来<br>也很好</small></div></section>
+    <section class="col left">
+      <article class="card glass" id="card-eeg">
+        <header><h2>脑电数据集回放 <em class="tag" id="eeg-seg">--</em></h2>
+          <div class="mini-actions">
+            <button class="icon-btn sm" id="eeg-play" title="暂停/播放">⏸</button>
+            <button class="btn xs" data-seek="rest">静息段</button>
+            <button class="btn xs" data-seek="task">心算段</button>
+          </div></header>
+        <canvas id="eeg-canvas" class="eeg-canvas"></canvas>
+        <input type="range" id="eeg-seek" min="0" max="100" step="0.1" value="0" aria-label="回放进度" />
+        <div class="bands" id="bands">
+          <div class="band" data-band="theta"><span>θ 4–8Hz</span><i></i><em>--</em></div>
+          <div class="band" data-band="alpha"><span>α 8–13Hz</span><i></i><em>--</em></div>
+          <div class="band" data-band="beta"><span>β 13–30Hz</span><i></i><em>--</em></div>
+        </div>
+        <div class="kv"><span>Engagement β/(α+θ)</span><b id="eeg-e">--</b><span>Drowsiness (θ+α)/(α+β)</span><b id="eeg-d">--</b></div>
+        <p class="note" id="eeg-note"></p>
+      </article>
+
+      <article class="card glass" id="card-cam">
+        <header><h2>本机视觉感知 <em class="tag" id="cam-fps">--</em></h2><span class="privacy-badge">◈ 画面不上传</span></header>
+        <div class="cam">
+          <video id="video" playsinline muted></video>
+          <canvas id="overlay"></canvas>
+          <div class="cam-empty" id="cam-empty"><p>等待后台感知</p><small>摄像头画面只在本机处理</small></div>
+          <div class="cam-calib" id="cam-calib" hidden><div class="ring"></div><p>正视屏幕、正常眨眼 8 秒…</p></div>
+        </div>
+        <div class="metrics" id="metrics">
+          <div><span>眨眼/分</span><b data-k="blink">--</b></div>
+          <div><span>PERCLOS</span><b data-k="perclos">--</b></div>
+          <div><span>哈欠/5分</span><b data-k="yawn">--</b></div>
+          <div><span>长闭眼</span><b data-k="long">--</b></div>
+          <div><span>偏头 Yaw</span><b data-k="yaw">--</b></div>
+          <div><span>俯仰 Pitch</span><b data-k="pitch">--</b></div>
+        </div>
+      </article>
+
+      <article class="card glass" id="card-demo" hidden>
+        <header><h2>演示控制 <em class="tag warn">手动模拟数据</em></h2></header>
+        <p class="note">演示模式下专注/疲劳由下面滑杆给出，不来自摄像头；EEG 曲线仍是真实数据集回放。</p>
+        <label class="slider">专注度 <output id="demo-fo">70</output><input type="range" id="demo-focus" min="0" max="100" value="70" /></label>
+        <label class="slider">疲劳值 <output id="demo-fa">30</output><input type="range" id="demo-fatigue" min="0" max="100" value="30" /></label>
+        <label class="switch"><input type="checkbox" id="demo-present" checked /><span></span>人在工位</label>
+        <div class="quick">
+          <button class="btn xs" data-q="focused">专注</button><button class="btn xs" data-q="distracted">分心</button>
+          <button class="btn xs" data-q="tired">疲劳</button><button class="btn xs" data-q="drowsy">困倦</button>
+          <button class="btn xs" data-q="away">离开</button><button class="btn xs" data-q="normal">平稳</button>
+        </div>
+        <div class="quick">
+          <button class="btn xs" id="demo-auto">▶ 自动剧本</button>
+          <button class="btn xs" id="demo-pomo">番茄钟到点</button>
+          <button class="btn xs" id="demo-water">喝水提醒</button>
+        </div>
+      </article>
+    </section>
+    <section class="col center">
+      <article class="card glass stage-card">
+        <header><div><span class="section-kicker">YOUR COMPANION</span><h2>小小陪伴，刚刚好。</h2></div><span class="companion-badge">一直在身边</span></header>
+        <div class="state-pill" id="state-pill"><i></i><span>平稳</span><small id="state-src">等待数据</small></div>
+        <div class="stage" id="stage"><div class="stage-floor" aria-hidden="true"></div></div>
+        <div class="gauges">
+          <div class="gauge" id="g-focus"></div>
+          <div class="gauge" id="g-fatigue"></div>
+        </div>
+        <div class="timeline-wrap">
+          <div class="legend"><span class="lf">专注</span><span class="lt">疲劳</span><small>最近 3 分钟 · 底部色带 = 状态</small></div>
+          <canvas id="timeline" class="timeline"></canvas>
+        </div>
+      </article>
+      <article class="card glass">
+        <header><div><span class="section-kicker">MAKE IT YOURS</span><h2>选一个，陪你上班。</h2></div><small class="muted">支持上传自己的形象</small></header>
+        <div class="gallery" id="gallery"></div>
+      </article>
+    </section>
+
+    <section class="col right">
+      <article class="card glass" id="card-desk">
+        <header><h2>让工位舒服一点</h2><label class="switch sm" title="状态变化时自动调灯光、发提醒"><input type="checkbox" id="auto" checked /><span></span>自动联动</label></header>
+        <div class="desk-block">
+          <div class="lamp" id="lamp" aria-hidden="true"><i></i></div>
+          <div class="desk-ctl">
+            <label class="slider">色温 <output id="kv">4500K</output><input type="range" id="kelvin" min="2700" max="6500" step="50" value="4500" class="kelvin" /></label>
+            <label class="slider">亮度 <output id="lv">80%</output><input type="range" id="level" min="0" max="100" value="80" aria-describedby="screen-status" /></label>
+            <div class="presets" id="presets"></div>
+            <label class="switch sm"><input type="checkbox" id="tint-on" /><span></span>预览面板色温</label>
+            <label class="switch sm" id="sync-wrap"><input type="checkbox" id="sync-screen" disabled /><span></span>联动电脑屏幕亮度</label>
+            <small class="muted" id="screen-status" role="status" aria-live="polite">请在桌面版中调节电脑屏幕亮度。</small>
+          </div>
+        </div>
+        <div class="desk-block music">
+          <div class="eq" id="eq" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="desk-ctl">
+            <div class="tracks" id="tracks"></div>
+            <label class="slider">音量<input type="range" id="vol" min="0" max="1" step="0.01" value="0.5" /></label>
+          </div>
+        </div>
+        <div class="desk-block coffee">
+          <div class="cup" aria-hidden="true">☕</div>
+          <div class="desk-ctl">
+            <div class="coffee-row"><b id="coffee-text">休息一下，喝杯喜欢的。</b><em class="tag" id="coffee-src"></em></div>
+            <p class="note">附近门店 · 按距离推荐 · 选好即下单</p>
+            <div class="coffee-row"><button class="btn sm primary" id="coffee-go">看看附近咖啡 ↗</button></div>
+          </div>
+        </div>
+        <div class="desk-block">
+          <div class="desk-ctl">
+            <div class="coffee-row"><b>退出 NeuroDesk</b></div>
+            <p class="note">关闭后后台监测与桌宠都会停止。若托盘图标没有出现，也可用这里的按钮或快捷键 Ctrl+Shift+Q 退出。</p>
+            <div class="coffee-row"><button class="btn sm ghost" id="btn-quit">退出应用</button></div>
+          </div>
+        </div>
+      </article>
+
+      <article class="card glass chat-card">
+        <header><h2>和 <span id="chat-name">团子</span> 聊聊</h2><em class="tag" id="chat-via">正在连接</em><button type="button" class="btn xs ghost" id="chat-clear">清空对话</button></header>
+        <ul class="chat" id="chat" aria-live="polite"></ul>
+        <p class="note" id="chat-note">正在读取陪伴设置…</p>
+        <form class="chat-form" id="chat-form">
+          <input id="chat-input" placeholder="聊聊今天，或问问我现在的状态" autocomplete="off" aria-label="消息" maxlength="4000" />
+          <button type="button" class="icon-btn" id="chat-mic" title="语音输入">🎙</button>
+          <button type="button" class="btn sm ghost" id="chat-stop" hidden>停止</button>
+          <button class="btn sm primary" id="chat-send">发送</button>
+        </form>
+      </article>
+
+      <article class="card glass">
+        <header><h2>提醒记录</h2><button class="btn xs ghost" id="log-clear">清空</button></header>
+        <ul class="log" id="log"></ul>
+      </article>
+    </section>
+
+    <dialog class="glass settings" id="settings">
+      <form method="dialog">
+        <header><h3>设置</h3><button class="icon-btn" value="x" aria-label="关闭">✕</button></header>
+        <label>MQTT WebSocket 地址<input id="mqtt-url" placeholder="ws://localhost:9001" /></label>
+        <div class="row2"><button type="button" class="btn sm" id="mqtt-connect">连接</button><button type="button" class="btn sm ghost" id="mqtt-off">断开</button></div>
+        <label>番茄钟时长（分钟）<input id="pomo" type="number" min="1" max="90" value="25" /></label>
+        <label class="switch"><input type="checkbox" id="opt-voice" checked /><span></span>宠物说话（语音合成）</label>
+        <label class="switch"><input type="checkbox" id="opt-notify" /><span></span>切到后台时发系统通知</label>
+        <label class="switch"><input type="checkbox" id="opt-autostart" /><span></span>开机启动桌宠与后台监测</label>
+        <label class="switch"><input type="checkbox" id="opt-ai-share" /><span></span>让 DeepSeek 结合检测摘要回应</label>
+        <label class="switch"><input type="checkbox" id="opt-ai-proactive" /><span></span>疲劳或分心持续时主动关心</label>
+        <p class="note">模型收到对话文字和开启共享后的专注、疲劳等数值摘要；摄像头画面只在本机处理。关闭摘要共享后仍可文字对话。</p>
+        <p class="note">EEG 数据来自 PhysioNet EEGMAT 公开数据集回放，不是使用者本人的实时脑电；专注/疲劳是启发式指标，不是医学诊断。</p>
+      </form>
+    </dialog>
+    <dialog id="coffee-dialog" class="coffee-dialog glass" aria-labelledby="coffee-heading">
+      <div class="coffee-modal-head"><span class="section-kicker">TAKE A COFFEE BREAK</span><button id="coffee-close" class="icon-btn" aria-label="关闭咖啡推荐">✕</button><h2 id="coffee-heading">休息一下，咖啡在附近。</h2><p>先伸个懒腰，再选一杯喜欢的。</p></div>
+      <div class="coffee-meta"><span id="coffee-sample" class="tag warn">示例预览</span><button class="btn xs ghost" id="coffee-refresh">刷新门店 ↻</button></div>
+      <p id="coffee-status" class="coffee-status" role="status" aria-live="polite"></p>
+      <div id="coffee-stores"></div>
+      <footer><small id="coffee-footer-note">真实下单由接入的门店服务处理。仅在点击商品按钮后提交。</small><button class="btn ghost sm" id="coffee-later">先休息，稍后再说</button></footer>
+    </dialog>
+  </main>
+  <script src="/live2d/live2dcubismcore.min.js"></script>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

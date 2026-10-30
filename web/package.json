@@ -1,0 +1,62 @@
+{
+  "name": "neurodesk-desktop",
+  "private": true,
+  "description": "NeuroDesk 桌面专注伙伴与本机疲劳感知",
+  "author": "NeuroDesk",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "start": "npm run build && electron .",
+    "desktop": "electron .",
+    "test": "node tests/core.test.mjs && node --test tests/coffee.test.mjs tests/brightness.test.mjs tests/luckin.test.mjs tests/shansong.test.mjs tests/companion.test.mjs tests/tts.test.mjs",
+    "test:tts": "node tests/desktop-tts.mjs",
+    "test:quit": "node tests/desktop-quit.mjs",
+    "test:brightness": "node tests/desktop-brightness.mjs",
+    "test:ui": "node tests/ui-smoke.mjs",
+    "test:luckin-ui": "node tests/luckin-ui.mjs",
+    "test:shansong-ui": "node tests/shansong-ui.mjs",
+    "test:luckin-desktop": "node tests/desktop-luckin.mjs",
+    "test:companion-ui": "node tests/companion-ui.mjs",
+    "test:companion-desktop": "node tests/desktop-companion.mjs",
+    "test:desktop": "node tests/desktop-smoke.mjs",
+    "test:orders": "node tests/desktop-orders.mjs && node tests/desktop-demo-orders.mjs",
+    "test:bailu": "node tests/desktop-bailu-orders.mjs",
+    "pack": "npm run build && electron-builder --win dir --config.electronDist=node_modules/electron/dist --config.win.signAndEditExecutable=false",
+    "pack:portable": "npm run build && electron-builder --win portable --config.electronDist=node_modules/electron/dist --config.win.signAndEditExecutable=false"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "electron": "^42.0.0",
+    "electron-builder": "^26.0.12",
+    "vite": "^6.4.5"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "1.1.1",
+    "@pixi/unsafe-eval": "6.5.10",
+    "mqtt": "5.16.1",
+    "pixi-live2d-display": "0.4.0",
+    "pixi.js": "6.5.10"
+  },
+  "build": {
+    "appId": "com.neurodesk.desktop",
+    "productName": "NeuroDesk",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "desktop/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      { "from": "voices/piper", "to": "voices/piper" }
+    ],
+    "win": {
+      "target": "portable"
+    }
+  }
+}
