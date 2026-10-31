@@ -9,3 +9,5 @@ html, body { margin: 0; overflow: hidden; background: transparent; user-select: 
 #pet-state { margin-top: 5px; font-size: 10px; background: #fffffff0; color: #64756c; padding: 3px 10px; border-radius: 20px; }
 #pet-state[data-running='true'] { color: #32634e; }
 :focus-visible { outline: 2px solid #39775e; outline-offset: 3px; border-radius: 24px; }
+
+html,body,*{-webkit-app-region:no-drag}#pet-hide{position:absolute;right:10px;top:85px;border:0;border-radius:50%;background:#f5faf0;color:#416b52;width:24px;height:24px;cursor:pointer}.pet-body svg{pointer-events:none}.pet-body svg *{pointer-events:visiblePainted}

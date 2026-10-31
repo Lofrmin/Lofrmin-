@@ -1,3 +1,4 @@
+import {bindOverlayInput,paintedPet} from './overlay-input.js';
 import '../styles/pets.css';
 import '../styles/desktop-pet.css';
 import { PetView } from '../pets/view.js';
@@ -37,22 +38,6 @@ stage.tabIndex = 0;
 stage.setAttribute('role', 'button');
 stage.setAttribute('aria-label', '打开 NeuroDesk 工作台，拖动可移动桌宠');
 stage.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); bridge.openPanel(); } });
-let drag;
-stage.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0) return;
-  drag = { x: e.screenX, y: e.screenY, moved: false };
-  stage.setPointerCapture(e.pointerId);
-});
-stage.addEventListener('pointermove', (e) => {
-  if (!drag) return;
-  const x = e.screenX - drag.x, y = e.screenY - drag.y;
-  if (!drag.moved && Math.hypot(x, y) < 5) return;
-  drag.moved = true;
-  bridge.movePet({ x, y });
-  drag.x = e.screenX; drag.y = e.screenY;
-});
-stage.addEventListener('pointerup', () => {
-  if (drag && !drag.moved) bridge.openPanel();
-  drag = null;
-});
-stage.addEventListener('pointercancel', () => { drag = null; });
+bindOverlayInput({solid:paintedPet,dragTarget:t=>!!t.closest('#pet-stage'),onTap:()=>{pet.setMood('happy');setTimeout(()=>pet.setMood('normal'),1300);}});
+stage.addEventListener('dblclick',()=>bridge.openPanel());
+document.querySelector('#pet-hide').onclick=()=>bridge.setOverlays({pet:false});

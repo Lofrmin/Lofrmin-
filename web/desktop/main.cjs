@@ -11,9 +11,11 @@ const { locate } = require('./location.cjs');
 const { createCompanion } = require('./companion.cjs');
 const { createTts } = require('./tts.cjs');
 const { createLocalTts } = require('./local-tts.cjs');
+const { createOverlays } = require('./overlays.cjs');
 const brightness = require('./screen-brightness.cjs').createBrightnessController();
-let panel, pet, monitor, tray, server, origin, coffeeDemo, companion, quitting = false;
+let panel, pet, island, overlays, monitor, tray, server, origin, coffeeDemo, companion, quitting = false;
 let snapshot = { running: false, status: 'starting', source: '正在启动后台感知', focus: null, fatigue: null, state: 'normal' };
+let buildTrayMenu = () => {};
 let selectedPet = 'hiyori', offeredAt = 0, suspended = false, notifications = false;
 let coffee = createCoffeeGateway({ baseUrl: process.env.NEURODESK_COFFEE_API, token: process.env.NEURODESK_COFFEE_TOKEN });
 // Config lives in web/.runtime for both dev and the packaged build. When packaged, the exe sits in
@@ -63,7 +65,7 @@ const luckin = useLuckin ? createLuckinGateway({ token: luckinToken, delivery, j
 const useCoffeeDemo = !useLuckin && process.env.NEURODESK_COFFEE_DEMO !== '0' && !process.env.NEURODESK_COFFEE_API;
 const parkLocation = process.env.NEURODESK_COFFEE_LOCATION === 'bailu'
   ? { latitude: 30.58, longitude: 104.12 } : null;
-const broadcast = (channel, value) => [panel, pet].forEach((w) => { if (w && !w.isDestroyed()) w.webContents.send(channel, value); });
+const broadcast = (channel, value) => [panel, pet, island].forEach((w) => { if (w && !w.isDestroyed()) w.webContents.send(channel, value); });
 function openPanel(coffeeOffer = false) {
   panel.show(); panel.focus();
   if (coffeeOffer) panel.webContents.send('offer-coffee');
@@ -200,8 +202,14 @@ else {
     }
     panel = secureWindow({ width: 1320, height: 900, minWidth: 960, minHeight: 680, show: false, backgroundColor: '#f5f6f3', title: 'NeuroDesk · 工作台', autoHideMenuBar: true });
     monitor = secureWindow({ width: 640, height: 480, show: false, skipTaskbar: true, title: 'NeuroDesk 后台感知' });
-    const area = screen.getPrimaryDisplay().workArea;
-    pet = secureWindow({ width: 240, height: 280, x: area.x + area.width - 260, y: area.y + area.height - 310, frame: false, transparent: true, alwaysOnTop: true, resizable: false, skipTaskbar: true, hasShadow: false, show: false });
+    // The pet and the Dynamic Island are independent native windows (see overlays.cjs): small,
+    // transparent, click-through everywhere except their solid pixels.
+    overlays = createOverlays({
+      secureWindow, userDataDir, getPanel: () => panel, openPanel, quit: () => app.quit(),
+      sendToPanel: (channel, value) => { if (panel && !panel.isDestroyed()) panel.webContents.send(channel, value); },
+      handle, broadcast: (channel, value) => { broadcast(channel, value); buildTrayMenu(); },
+    });
+    pet = overlays.pet; island = overlays.island;
     const chatConfigPath = process.env.NEURODESK_CHAT_CONFIG || path.join(process.env.NEURODESK_TEST === '1' ? app.getPath('userData') : runtimeRoot, 'deepseek-config.json');
     const chatConfig = fs.existsSync(chatConfigPath) ? JSON.parse(fs.readFileSync(chatConfigPath, 'utf8')) : {};
     companion = createCompanion({
@@ -223,9 +231,9 @@ else {
       callback(permission === 'media' && contents === monitor.webContents && details.mediaTypes?.every((t) => t === 'video') || permission === 'geolocation' && contents === panel.webContents);
     });
     handle('snapshot', () => [panel, pet, monitor], () => snapshot);
-    handle('open-panel', () => [pet, panel], () => openPanel());
+    handle('open-panel', () => [pet, island, panel], () => openPanel());
     handle('hide-panel', () => [panel], () => panel.hide());
-    handle('show-pet', () => [panel], () => { pet.show(); return true; });
+    handle('show-pet', () => [panel], () => { overlays.set({ pet: true }); return true; });
     handle('selected-pet', () => [pet], () => selectedPet);
     handle('select-pet', () => [panel], (id, name) => { if (typeof id === 'string' && id.length < 120) { selectedPet = id; companion.setPersona(name); broadcast('select-pet', id); } });
     handle('monitor-control', () => [panel], (value) => { if (!['start', 'stop', 'calibrate'].includes(value)) throw new Error('未知监测操作'); command(value); });
@@ -272,11 +280,6 @@ else {
       if (!luckin?.canOpenPayment(url)) throw new Error('支付链接无效或不属于本机订单');
       return shell.openExternal(url);
     });
-    ipcMain.on('move-pet', (e, d) => {
-      if (e.sender !== pet.webContents || !Number.isFinite(d?.x) || !Number.isFinite(d?.y)) return;
-      const b = pet.getBounds(), work = screen.getDisplayMatching(b).workArea;
-      pet.setPosition(Math.round(Math.max(work.x, Math.min(work.x + work.width - b.width, b.x + d.x))), Math.round(Math.max(work.y, Math.min(work.y + work.height - b.height, b.y + d.y))));
-    });
     ipcMain.on('monitor-snapshot', (e, data) => {
       if (e.sender !== monitor.webContents || !data || typeof data !== 'object') return;
       snapshot = data; broadcast('snapshot', snapshot);
@@ -306,16 +309,27 @@ else {
     }
     const icon = nativeImage.createFromBitmap(pixels, { width: 16, height: 16 });
     tray = new Tray(icon); tray.setToolTip('NeuroDesk · 后台感知');
-    tray.setContextMenu(Menu.buildFromTemplate([
-      { label: '打开工作台', click: () => openPanel() }, { label: '显示桌宠', click: () => pet.show() },
-      { label: '开始监测', click: () => command('start') }, { label: '暂停监测', click: () => command('stop') },
-      { type: 'separator' }, { label: '退出 NeuroDesk', click: () => app.quit() },
-    ]));
+    buildTrayMenu = () => {
+      if (!tray || tray.isDestroyed()) return;
+      const o = overlays.state();
+      tray.setContextMenu(Menu.buildFromTemplate([
+        { label: '打开工作台', click: () => openPanel() },
+        { label: o.pet ? '隐藏桌宠' : '显示桌宠', click: () => overlays.set({ pet: !o.pet }) },
+        { label: o.island ? '隐藏灵动岛' : '显示灵动岛', click: () => overlays.set({ island: !o.island }) },
+        { label: '隐藏/恢复全部悬浮窗  (Ctrl+Shift+H)', click: () => overlays.toggleAll() },
+        { type: 'separator' },
+        { label: '开始监测', click: () => command('start') }, { label: '暂停监测', click: () => command('stop') },
+        { type: 'separator' }, { label: '退出 NeuroDesk', click: () => app.quit() },
+      ]));
+    };
+    buildTrayMenu();
     tray.on('click', () => openPanel());
     await panel.loadURL(`${origin}/index.html`);
     await pet.loadURL(`${origin}/pet.html`);
+    await island.loadURL(`${origin}/island.html`);
     await monitor.loadURL(`${origin}/monitor.html`);
-    pet.showInactive();
+    overlays.apply();
+    overlays.registerShortcut();
     if (process.env.NEURODESK_TEST !== '1') {
       powerMonitor.on('suspend', () => { suspended = snapshot.running; command('stop'); });
       powerMonitor.on('resume', () => { if (suspended) command('start'); suspended = false; });
@@ -323,7 +337,7 @@ else {
     if (process.argv.includes('--show-panel')) openPanel();
   }).catch((error) => { require('electron').dialog.showErrorBox('NeuroDesk 启动失败', error.message); app.quit(); });
 }
-app.on('before-quit', () => { quitting = true; companion?.cancel(); server?.close(); coffeeDemo?.server.close(); localTts.stop(); });
+app.on('before-quit', () => { quitting = true; overlays?.dispose(); companion?.cancel(); server?.close(); coffeeDemo?.server.close(); localTts.stop(); });
 app.on('window-all-closed', () => { if (quitting) app.quit(); });
 // Third way out, in case the tray icon is missing and the in-app button is not noticed.
 try { globalShortcut.register('Control+Shift+Q', () => app.quit()); } catch { /* already owned */ }
