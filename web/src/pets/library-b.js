@@ -42,22 +42,8 @@ export const chick = {
 };
 
 export const robot = {
-  id: 'robot', name: '小七', species: '机器人', accent: '#22d3ee', sound: '滴滴', voice: { pitch: 1.1, rate: 1.15 }, idle: 'float',
-  desc: '工位管家机器人，负责色温、音乐和叫咖啡',
-  face: {
-    eyes: { cx: 100, y: 88, gap: 40, r: 9, color: '#67e8f9', style: 'visor' },
-    mouth: { x: 100, y: 112, w: 11, style: 'robot', color: '#67e8f9' },
-    cheeks: { dx: 38, dy: 16, r: 6, color: '#f472b6' },
-    sweat: false,
-  },
-  back: (u) => `<defs><linearGradient id="${u}r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f8fafc"/><stop offset="1" stop-color="#cbd5e1"/></linearGradient></defs>
-    <rect x="66" y="142" width="68" height="46" rx="18" fill="url(#${u}r)"/>
-    <circle cx="100" cy="164" r="8" fill="#22d3ee" class="chest" filter="url(#${u}glow)"/>
-    <path d="M66 156 Q46 160 44 176 M134 156 Q154 160 156 176" stroke="#94a3b8" stroke-width="8" fill="none" stroke-linecap="round"/>`,
-  front: (u) => `<path d="M100 40 L100 24" stroke="#94a3b8" stroke-width="4" stroke-linecap="round"/>
-    <circle cx="100" cy="20" r="7" fill="#f472b6" class="antenna" filter="url(#${u}glow)"/>
-    <rect x="44" y="42" width="112" height="98" rx="36" fill="url(#${u}r)" stroke="#e2e8f0" stroke-width="2"/>
-    <rect x="34" y="78" width="12" height="28" rx="6" fill="#94a3b8"/><rect x="154" y="78" width="12" height="28" rx="6" fill="#94a3b8"/>
-    <rect x="56" y="60" width="88" height="66" rx="24" fill="#0f172a"/>
-    <rect x="62" y="64" width="40" height="8" rx="4" fill="#fff" opacity=".12"/>`,
+  id: 'robot', name: '小七', species: '机器人', accent: '#69cbff',
+  sound: '滴滴', voice: { pitch: 1.1, rate: 1.15 }, idle: 'float',
+  renderer: 'xiaoqi',
+  desc: '小七 V6.4：五种表情、双段伸缩面罩与旋转胸口魔方',
 };

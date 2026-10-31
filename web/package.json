@@ -17,6 +17,7 @@
     "test:quit": "node tests/desktop-quit.mjs",
     "test:brightness": "node tests/desktop-brightness.mjs",
     "test:ui": "node tests/ui-smoke.mjs",
+    "test:xiaoqi-ui": "node tests/xiaoqi-ui.mjs",
     "test:luckin-ui": "node tests/luckin-ui.mjs",
     "test:shansong-ui": "node tests/shansong-ui.mjs",
     "test:luckin-desktop": "node tests/desktop-luckin.mjs",

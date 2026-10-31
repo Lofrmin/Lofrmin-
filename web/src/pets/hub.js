@@ -22,7 +22,12 @@ export class PetHub {
 
   mount(host, opts) {
     const v = new PetView(host, opts);
-    v.onPoke = () => this.onPoke?.();
+    v.onPoke = () => {
+      if (v.robot) for (const other of this.views) {
+        if (other !== v) other.robot?.setStage(v.robot.getStage());
+      }
+      this.onPoke?.();
+    };
     if (this.def) v.setPet(this.def);
     v.setMood(this.mood, true);
     this.views.add(v);

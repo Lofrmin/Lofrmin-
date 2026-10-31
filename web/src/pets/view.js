@@ -1,5 +1,6 @@
 import { petSVG, updateFace, newUid } from './library.js';
 import { Live2DAvatar } from './live2d.js';
+import { createXiaoQi } from './xiaoqi.js';
 
 const FX = { sleepy: ['Z', 'z', 'Z'], curious: ['?'], alert: ['!', '!'], love: ['♥', '♥', '♥'], focused: ['✦', '✧', '✦'], happy: ['♪', '♫'], tired: ['~'], away: ['…'] };
 
@@ -26,10 +27,15 @@ export class PetView {
     this.uid = newUid();
     this.avatar?.destroy();
     this.avatar = null;
+    this.robot?.destroy();
+    this.robot = null;
+    this.img = null; this.svg = null;
     this.el.dataset.idle = def.idle ?? 'bounce';
     this.el.dataset.pet = def.id;
     this.el.style.setProperty('--accent', def.accent ?? '#a78bfa');
-    if (def.live2d) {
+    if (def.renderer === 'xiaoqi') {
+      this.robot = createXiaoQi(this.body, this.uid);
+    } else if (def.live2d) {
       this.img = null; this.svg = null; this.body.replaceChildren();
       delete this.body.dataset.live2dError;
       const avatar = this.avatar = new Live2DAvatar(this.body, { onPoke: () => this.onPoke?.() });
@@ -58,7 +64,9 @@ export class PetView {
     if (!force && mood === this.mood) return;
     this.mood = mood;
     this.el.dataset.mood = mood;
-    if (this.avatar) {
+    if (this.robot) {
+      this.robot.setMood(mood);
+    } else if (this.avatar) {
       this.avatar.setMood(mood);
     } else if (this.img) {
       const src = this.def.images[mood] ?? this.def.images.normal;
@@ -104,9 +112,10 @@ export class PetView {
       this.el.classList.remove('poke');
       void this.el.offsetWidth;
       this.el.classList.add('poke');
+      this.robot?.poke();
       this.onPoke?.();
     });
   }
 
-  destroy() { clearTimeout(this.bubbleT); this.abort?.abort(); this.avatar?.destroy(); this.el.remove(); }
+  destroy() { clearTimeout(this.bubbleT); this.abort?.abort(); this.avatar?.destroy(); this.robot?.destroy(); this.el.remove(); }
 }

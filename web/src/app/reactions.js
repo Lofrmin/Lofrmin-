@@ -98,7 +98,8 @@ export class Reactions {
   }
 
   poke() {
-    this.flash(Math.random() < 0.3 ? 'love' : 'happy', 1800);
+    if (this.app.hub.def.renderer === 'xiaoqi') clearTimeout(this.flashT);
+    else this.flash(Math.random() < 0.3 ? 'love' : 'happy', 1800);
     this.app.hub.say(pick(LINES.poke), { voice: Math.random() < 0.5 });
   }
 

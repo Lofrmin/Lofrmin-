@@ -15,6 +15,7 @@ const SHARED = (u) => `<defs><filter id="${u}glow" x="-60%" y="-60%" width="220%
   <feGaussianBlur stdDeviation="2.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>`;
 
 export function petSVG(def, uid, mood) {
+  if (def.renderer === 'xiaoqi') return `<svg viewBox="0 0 825 1197" class="pet-svg" aria-hidden="true"><image href="/pets/xiaoqi/serious.webp" width="825" height="1197"/></svg>`;
   const tail = def.tailOrigin ?? '150px 168px';
   return `<svg viewBox="0 0 200 210" class="pet-svg" style="--tail-origin:${tail}" aria-hidden="true">
     ${SHARED(uid)}
