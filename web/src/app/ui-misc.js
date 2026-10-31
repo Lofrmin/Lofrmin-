@@ -6,6 +6,13 @@ const $ = (s) => document.querySelector(s);
 export function bindChat(app) {
   const list = $('#chat');
   const records = new Map();
+  const voice = $('#chat-voice');
+  voice.checked = localStorage.getItem('nd-chat-voice') !== '0';
+  voice.addEventListener('change', () => {
+    localStorage.setItem('nd-chat-voice', voice.checked ? '1' : '0');
+    if (!voice.checked) app.hub.stopSpeaking();
+  });
+  $('#chat-voice-stop').addEventListener('click', () => app.hub.stopSpeaking());
   let submitting = false;
   const add = (who, text) => {
     const li = document.createElement('li');
@@ -37,8 +44,9 @@ export function bindChat(app) {
       if (!list.children.length) for (const row of config.history || []) add(row.role === 'user' ? 'me' : 'bot', row.content);
       return;
     }
-    if (event.type === 'reset') { list.replaceChildren(); records.clear(); submitting = false; busy(false); return; }
+    if (event.type === 'reset') { app.hub.stopSpeaking(); list.replaceChildren(); records.clear(); submitting = false; busy(false); return; }
     if (event.type === 'start') {
+      app.hub.stopSpeaking();
       const row = add('bot', event.kind === 'proactive' ? '伙伴正在想一句关心的话…' : '正在回复…');
       records.set(event.requestId, { ...row, text: event.text, reply: '' });
       if (event.kind !== 'proactive') busy(true);
@@ -65,10 +73,16 @@ export function bindChat(app) {
         row.li.append(button);
         buttons.push({ label, run: () => button.click() });
       }
-      app.hub.say(event.reply, { sound: false, actions: buttons, notify: event.kind === 'proactive' });
+      const replay = document.createElement('button');
+      replay.type = 'button'; replay.className = 'btn xs ghost'; replay.textContent = '朗读回复';
+      replay.addEventListener('click', () => app.hub.utter(event.reply));
+      row.li.append(replay);
+      app.hub.say(event.reply, { voice: false, sound: false, actions: buttons, notify: event.kind === 'proactive' });
+      if (voice.checked) app.hub.utter(event.reply);
       if (event.kind === 'proactive') app.log.add(event.reply, { tag: 'AI关心', color: '#528068' });
       busy(false);
     } else if (event.type === 'error' || event.type === 'cancelled') {
+      app.hub.stopSpeaking();
       if (event.kind === 'proactive') row.li.remove();
       else { row.content.textContent = `${row.reply ? `${row.reply}\n\n` : ''}${event.message}`; row.li.classList.add('chat-error'); }
       via.textContent = event.type === 'cancelled' ? '已停止' : 'DeepSeek · 连接失败';

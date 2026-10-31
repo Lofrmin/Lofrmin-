@@ -29,7 +29,7 @@ const localTts = createLocalTts({
   piperDir: process.env.NEURODESK_PIPER_DIR
     || (app.isPackaged
       ? path.join(process.resourcesPath || path.join(path.dirname(process.execPath), 'resources'), 'voices', 'piper')
-      : path.join(runtimeRoot, 'piper')),
+      : (fs.existsSync(path.join(runtimeRoot, 'piper', 'tokens.txt')) ? path.join(runtimeRoot, 'piper') : path.resolve(__dirname, '../voices/piper'))),
   kokoroDir: process.env.NEURODESK_KOKORO_DIR || path.join(runtimeRoot, 'kokoro'),
   engine: process.env.NEURODESK_TTS_ENGINE || 'piper',
   port: Number(process.env.NEURODESK_TTS_PORT) || 18090,

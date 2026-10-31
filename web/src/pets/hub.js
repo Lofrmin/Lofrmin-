@@ -59,15 +59,25 @@ export class PetHub {
   // Prefer real neural audio (which also drives the Live2D mouth from playback loudness);
   // fall back to the system voice when synthesis is unavailable.
   utter(text) {
+    const utterance = this.utterance = (this.utterance || 0) + 1;
     const clean = text.replace(/[~！!]+/g, '，');
     speech.stop();
+    globalThis.speechSynthesis?.cancel();
     for (const v of this.views) v.avatar?.lipSync?.(onLevel);
     speech.say(clean).catch(() => {
+      if (utterance !== this.utterance) return;
       // Synthesis failed: release the audio-driven mouth so the timed fallback can take over.
       for (const v of this.views) v.avatar?.stopLip?.();
       speak(clean, this.def.voice);
       for (const v of this.views) v.avatar?.speak?.(Math.max(3000, clean.length * 110));
     });
+  }
+
+  stopSpeaking() {
+    this.utterance = (this.utterance || 0) + 1;
+    speech.stop();
+    globalThis.speechSynthesis?.cancel();
+    for (const v of this.views) v.avatar?.stopLip?.();
   }
 
   desktopNotify(body) {

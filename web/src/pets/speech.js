@@ -2,6 +2,7 @@
 // is driven by actual audio loudness instead of a synthetic sine wave, so lip movement matches
 // the voice. Browsers without the bridge keep the system speechSynthesis fallback in sound.js.
 let bridge, current = null, analyser = null, ctx = null, raf = 0, level = 0;
+let generation = 0, finishCurrent = null;
 const listeners = new Set();
 
 function emit(event) { for (const fn of listeners) { try { fn(event); } catch { /* listener errors must not break playback */ } } }
@@ -39,10 +40,12 @@ function track() {
 }
 
 function stop() {
+  generation++;
   if (current) {
     try { current.pause(); } catch { /* already stopped */ }
     current = null;
   }
+  finishCurrent?.(); finishCurrent = null;
   cancelAnimationFrame(raf); raf = 0; level = 0;
   emit({ type: 'level', value: 0 });
   emit({ type: 'end' });
@@ -58,22 +61,41 @@ export function createSpeech() {
     async say(text, { voice, rate } = {}) {
       if (!bridge?.ttsSpeak) throw new Error('本机语音合成不可用');
       stop();
-      const result = await bridge.ttsSpeak({ text, ...(voice ? { voice } : {}), ...(rate ? { rate } : {}) });
-      if (!result?.id) throw new Error('语音合成没有返回音频');
-      const node = ensureAnalyser();
-      const el = new Audio(`${location.origin}/tts?id=${result.id}`);
-      el.preload = 'auto';
-      current = el;
-      if (node && ctx?.state === 'suspended') await ctx.resume().catch(() => {});
-      if (node) { try { ctx.createMediaElementSource(el).connect(node); node.connect(ctx.destination); } catch { /* fall through to plain playback */ } }
-      await new Promise((resolve, reject) => {
-        el.addEventListener('playing', () => { track(); emit({ type: 'start', cached: result.cached }); }, { once: true });
-        el.addEventListener('ended', () => { stop(); resolve(); }, { once: true });
-        el.addEventListener('error', () => { stop(); reject(new Error('音频播放失败')); }, { once: true });
-        // Some WebAudio graphs start silently until resumed; if 'playing' never fires, fail fast.
-        setTimeout(() => { if (current === el && el.paused) el.play().catch(() => {}); }, 400);
-        el.play().catch((error) => { stop(); reject(new Error(String(error?.message || '音频播放失败'))); });
-      });
+      const request = generation;
+      // The synthesis endpoint accepts at most 600 characters per request.
+      // Read long answers in sequence instead of silently losing their tail.
+      const chunks = String(text).match(/[\s\S]{1,500}/g) || [];
+      for (const chunk of chunks) {
+        if (request !== generation) return;
+        const result = await bridge.ttsSpeak({ text: chunk, ...(voice ? { voice } : {}), ...(rate ? { rate } : {}) });
+        if (request !== generation) return;
+        if (!result?.id) throw new Error('语音合成没有返回音频');
+        const node = ensureAnalyser();
+        const el = new Audio(`${location.origin}/tts?id=${result.id}`);
+        el.preload = 'auto';
+        current = el;
+        if (node && ctx?.state === 'suspended') await ctx.resume().catch(() => {});
+        if (node) { try { ctx.createMediaElementSource(el).connect(node); node.connect(ctx.destination); } catch { /* fall through to plain playback */ } }
+        await new Promise((resolve, reject) => {
+          let retry;
+          const finish = (error) => {
+            clearTimeout(retry);
+            if (current === el) {
+              current = null; finishCurrent = null;
+              cancelAnimationFrame(raf); raf = 0; level = 0;
+              emit({ type: 'level', value: 0 }); emit({ type: 'end' });
+            }
+            if (error) reject(error); else resolve();
+          };
+          finishCurrent = () => finish();
+          el.addEventListener('playing', () => { track(); emit({ type: 'start', cached: result.cached }); }, { once: true });
+          el.addEventListener('ended', () => finish(), { once: true });
+          el.addEventListener('error', () => finish(new Error('音频播放失败')), { once: true });
+          // Some WebAudio graphs start silently until resumed; if 'playing' never fires, fail fast.
+          retry = setTimeout(() => { if (current === el && el.paused) el.play().catch(() => {}); }, 400);
+          el.play().catch((error) => finish(new Error(String(error?.message || '音频播放失败'))));
+        });
+      }
     },
     stop,
   };

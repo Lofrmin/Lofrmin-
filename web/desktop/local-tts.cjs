@@ -97,6 +97,7 @@ function createLocalTts({
       const out = logFile ? fs.openSync(logFile, 'a') : 'ignore';
       child = spawn(python, [script, '--model-dir', modelDir, '--engine', chosen, '--port', String(port), '--provider', provider], {
         stdio: ['ignore', out, out], windowsHide: true,
+        env: { ...process.env, PYTHONPATH: [logFile && path.join(path.dirname(logFile), 'tts-python'), process.env.PYTHONPATH].filter(Boolean).join(path.delimiter) },
       });
       child.on('exit', () => { child = null; ready = false; });
       waitHealthy(port).then((ok) => {

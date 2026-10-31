@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "start": "npm run build && electron .",
     "desktop": "electron .",
-    "test": "node tests/core.test.mjs && node --test tests/coffee.test.mjs tests/brightness.test.mjs tests/luckin.test.mjs tests/shansong.test.mjs tests/companion.test.mjs tests/tts.test.mjs",
+    "test": "node tests/core.test.mjs && node --test tests/coffee.test.mjs tests/brightness.test.mjs tests/luckin.test.mjs tests/shansong.test.mjs tests/companion.test.mjs tests/tts.test.mjs tests/speech.test.mjs",
     "test:tts": "node tests/desktop-tts.mjs",
     "test:quit": "node tests/desktop-quit.mjs",
     "test:brightness": "node tests/desktop-brightness.mjs",

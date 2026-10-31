@@ -161,6 +161,10 @@
 
       <article class="card glass chat-card">
         <header><h2>和 <span id="chat-name">团子</span> 聊聊</h2><em class="tag" id="chat-via">正在连接</em><button type="button" class="btn xs ghost" id="chat-clear">清空对话</button></header>
+        <div class="chat-voice-controls">
+          <label><input type="checkbox" id="chat-voice" checked /> 自动朗读回复</label>
+          <button type="button" class="btn xs ghost" id="chat-voice-stop">停止朗读</button>
+        </div>
         <ul class="chat" id="chat" aria-live="polite"></ul>
         <p class="note" id="chat-note">正在读取陪伴设置…</p>
         <form class="chat-form" id="chat-form">

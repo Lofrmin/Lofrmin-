@@ -36,6 +36,10 @@ CMD 将 Electron 用户数据与构建临时文件放到 `web/.runtime`，避免
 
 密钥保存在 `web/.runtime/deepseek-config.json` 的 `apiKey` 字段，只由 Electron 主进程读取。可用 `NEURODESK_CHAT_API_KEY` / `DEEPSEEK_API_KEY` 覆盖密钥、`NEURODESK_CHAT_MODEL` 覆盖模型、`NEURODESK_CHAT_CONFIG` 指定本机配置文件。配置不进入 Git 或安装包，网页拿不到密钥；模型请求固定发往 `https://api.deepseek.com/chat/completions`。普通测试在独立用户目录启动，不读取真实密钥。
 
+聊天区默认开启“自动朗读回复”，普通文字对话和主动关心完成后都会朗读，不依赖“宠物说话”设置。每条新回复可点击“朗读回复”重播，“停止朗读”立即停止播放及等待中的语音；发送下一条消息或清空对话也会停止上一条。关闭自动朗读会保存在本机，重新打开后仍生效。长回复分段顺序朗读。
+
+语音优先使用本机 Piper 模型。缺少 `sherpa_onnx` 时，可从项目根目录执行 `python -m pip install --target web/.runtime/tts-python sherpa-onnx`；桌面语音服务会自动读取该目录中的运行库，配置及依赖均不进入 Git。离线引擎不可用时仍可回退到系统语音。
+
 设置中有两个开关：
 
 - **让 DeepSeek 结合检测摘要回应**：开启后，将当前有效的专注、疲劳、是否在位、眨眼/PERCLOS/哈欠数值摘要与文字对话一同发送。摄像头帧、人脸关键点、图片和视频始终留在本机；暂停监测、校准、无脸、过期或缺失数据保留为空，不伪造零分。关闭后不再附加新的检测摘要，仍可文字对话。

@@ -48,13 +48,29 @@ async function send(text) { await page.fill('#chat-input', text); await page.cli
 async function finished() { await page.waitForFunction(() => window.neuro.chat.pending.size === 0 && !document.querySelector('#chat-send').disabled); }
 try {
   await page.goto('http://127.0.0.1:4177/'); await page.waitForFunction(() => window.neuro?.chat.config.model);
-  await page.evaluate(() => { window.neuro.hub.voice = false; window.neuro.music.play = (name) => { window.__musicPlayed = name; }; });
-  await page.click('[data-view="desk"]');
+  await page.evaluate(() => {
+    window.neuro.hub.voice = false;
+    window.__spoken = []; window.__stops = 0;
+    window.neuro.hub.utter = (text) => window.__spoken.push(text);
+    window.neuro.hub.stopSpeaking = () => window.__stops++;
+    window.neuro.music.play = (name) => { window.__musicPlayed = name; };
+  });
+  await page.click('.nd-nav[data-action="chat"]');
   await send('我叫小林');
   await page.waitForFunction(() => document.querySelector('#chat .bot .chat-text')?.textContent === '你好，');
   assert.equal(await page.locator('#chat-send').isDisabled(), true, 'stream is visible before completion');
+  assert.deepEqual(await page.evaluate(() => window.__spoken), [], 'partial reply is not read');
   await finished(); assert.match(await page.locator('#chat').textContent(), /你好，我在这里陪你/);
+  assert.deepEqual(await page.evaluate(() => window.__spoken), ['你好，我在这里陪你。'], 'ordinary model reply is read even with pet speech off');
+  await page.click('#chat-voice-stop');
+  assert.ok(await page.evaluate(() => window.__stops >= 2));
+  await page.uncheck('#chat-voice');
   await send('我叫什么'); await finished();
+  assert.equal(await page.evaluate(() => window.__spoken.length), 1, 'muting automatic chat speech suppresses new replies');
+  await page.locator('#chat .bot').last().getByRole('button', { name: '朗读回复' }).click();
+  assert.equal(await page.evaluate(() => window.__spoken.at(-1)), '你叫小林，我记得。');
+  assert.equal(await page.evaluate(() => localStorage.getItem('nd-chat-voice')), '0');
+  await page.check('#chat-voice');
   assert.ok(requests[1].messages.some((m) => m.role === 'user' && m.content === '我叫小林'));
   await send('放点雨声'); await finished();
   assert.equal(await page.evaluate(() => window.__musicPlayed), undefined, 'model cannot execute actions on its own');
@@ -72,7 +88,7 @@ try {
   await page.waitForFunction(() => document.querySelector('#log').textContent.includes('AI关心'));
   mkdirSync('artifacts', { recursive: true });
   await page.screenshot({ path: 'artifacts/companion-chat-test.png', fullPage: true });
-  await page.click('#btn-settings'); await page.locator('label.switch').filter({ has: page.locator('#opt-ai-share') }).click();
+  await page.click('.nd-side-footer [data-action="settings"]'); await page.locator('label.switch').filter({ has: page.locator('#opt-ai-share') }).click();
   await page.waitForFunction(() => !window.neuro.chat.config.shareStatus);
   assert.equal(await page.locator('#opt-ai-proactive').isDisabled(), true);
   await page.locator('#settings button[aria-label="关闭"]').click();
