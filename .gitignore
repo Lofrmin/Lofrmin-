@@ -1,3 +1,3 @@
 .godot/
-.runtime/
-*.log
+backend/data/
+__pycache__/
