@@ -85,6 +85,15 @@ func run() -> void:
 		game.update_boss(0.1, false)
 	check(game.laps == lap, "hunter never catches through a thin wall")
 	check(game.boss.position.x < center.x - 0.30, "hunter body does not cross the wall")
+	place(game, center + Vector3(-1.7, 0, 0.7), center + Vector3(-0.362, 0, 0.7))
+	await physics_frame
+	check(game.has_sight(), "wall-hugging player on the same side remains visible")
+	lap = game.laps
+	for i in range(15):
+		await physics_frame
+		if game.laps != lap: break
+		game.update_boss(0.1, false)
+	check(game.laps > lap, "player collision margin at a wall cannot make pursuit stop")
 	wall.free()
 
 	var desk := obstacle(game, center + Vector3(0, 0.45, 0), Vector3(0.8, 0.9, 1.2))
