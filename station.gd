@@ -527,13 +527,10 @@ func build_witness(layer: Node3D, center: Vector3) -> void:
 	layer.add_child(figure)
 	figure.position = center + Vector3(1.08, 0, 0.73)
 	figure.rotation.y = -1.55
-	box(figure, Vector3(0, 1.22, 0), Vector3(0.54, 0.62, 0.31), palette.suit)
-	box(figure, Vector3(0, 1.68, 0), Vector3(0.32, 0.31, 0.29), palette.frame)
-	box(figure, Vector3(0, 1.70, -0.153), Vector3(0.27, 0.14, 0.026), palette.visor)
-	box(figure, Vector3(0.10, 1.32, -0.166), Vector3(0.10, 0.08, 0.026), palette.blue)
-	for side in [-1, 1]:
-		box(figure, Vector3(side * 0.33, 1.16, 0.03), Vector3(0.17, 0.66, 0.22), palette.suit)
-		box(figure, Vector3(side * 0.145, 0.45, 0), Vector3(0.24, 0.90, 0.25), palette.suit)
+	var model: Node3D = preload("res://assets/characters/lin_cen/lincen.glb").instantiate()
+	model.name = "LinCenModel"
+	model.rotation.y = PI
+	figure.add_child(model)
 	witnesses.append(figure)
 
 
@@ -542,7 +539,8 @@ func update_witness(chapter: int, seen: bool, approved: bool) -> void:
 	witnesses[0].visible = chapter == 0 and not seen
 	witnesses[1].visible = chapter < 2
 	var alive := chapter == 1 and not approved
-	witnesses[1].position = point(OFFICE) + Vector3(1.08, 0.0 if alive else 0.17, 0.42)
+	# The baked mesh extends 0.1945 m forward, which becomes its lowest point when prone.
+	witnesses[1].position = point(OFFICE) + Vector3(1.08, 0.0 if alive else 0.20, 0.42)
 	witnesses[1].rotation = Vector3(0.0 if alive else -PI / 2.0, -1.55 if alive else 0.0, 0.0)
 
 
