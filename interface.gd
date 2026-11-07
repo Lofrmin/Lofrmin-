@@ -37,6 +37,8 @@ func _draw() -> void:
 	pointer = get_global_mouse_position() * Vector2(1280, 720) / size
 	draw_set_transform(Vector2.ZERO, 0.0, size / Vector2(1280, 720))
 	match game.mode:
+		"menu": draw_menu()
+		"controls": draw_controls()
 		"intro": draw_intro()
 		"audit", "keypad": draw_terminal()
 		"ending": draw_ending()
@@ -46,6 +48,22 @@ func _draw() -> void:
 
 func write(at: Vector2, message: String, font_size: int, color: Color = WHITE) -> void:
 	draw_string(font, at, message, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, color)
+
+
+func text_lines(message: String, width: float, font_size: int) -> PackedStringArray:
+	var lines := PackedStringArray()
+	var line := ""
+	for character in message:
+		if character == "\n":
+			lines.append(line)
+			line = ""
+		elif not line.is_empty() and font.get_string_size(line + character, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > width:
+			lines.append(line)
+			line = character
+		else:
+			line += character
+	lines.append(line)
+	return lines
 
 
 func code(at: Vector2, message: String, font_size: int, color: Color = MINT) -> void:
@@ -76,39 +94,89 @@ func button(rect: Rect2, action: String, caption: String, color: Color = MINT) -
 	hit_regions[action] = rect
 
 
+func draw_menu() -> void:
+	var shade := Color(0.008, 0.019, 0.027)
+	var curtain := PackedVector2Array([Vector2.ZERO, Vector2(720,0), Vector2(720,720), Vector2(0,720)])
+	draw_polygon(curtain, PackedColorArray([alpha(shade,0.96), alpha(shade,0.15), alpha(shade,0.15), alpha(shade,0.96)]))
+	code(Vector2(64,63), "C O R R I D O R   /   CASE ARCHIVE", 13)
+	code(Vector2(1065,63), "PANDA JAM / CYCLE", 11, DIM)
+	write(Vector2(60,171), "回廊", 80)
+	write(Vector2(65,218), "借来的明天", 26, MINT)
+	draw_line(Vector2(65,246),Vector2(113,246),MINT,2.0)
+	write(Vector2(65,286), "同一个任务，再走一次，答案会不同。", 20)
+	write(Vector2(65,317), "寻找失联同事，对照晨暮两区的记录。", 16, DIM)
+	var saved: bool = game.has_progress()
+	button(Rect2(65,358,330,49), "continue" if saved else "new_case", "Enter  继续调查" if saved else "Enter  开始新调查")
+	if saved:
+		button(Rect2(65,420,330,45), "new_case", "N  开始新调查", DIM)
+		button(Rect2(65,477,190,43), "controls", "H  操作说明", DIM)
+		button(Rect2(269,477,126,43), "quit", "Q  退出", DIM)
+		write(Vector2(65,561), "已归档：" + game.chapter_title(), 17)
+		write(Vector2(65,590), "继续调查会回到 A-01，保留已归档证据。", 14, DIM)
+	else:
+		button(Rect2(65,420,330,45), "controls", "H  操作说明", DIM)
+		button(Rect2(65,478,330,43), "quit", "Q  退出", DIM)
+		write(Vector2(65,566), "第一步：前往晨区 B-17，核对门禁记录。", 15, DIM)
+	code(Vector2(65,669), "01  EXPLORE   /   02  COMPARE   /   03  RETURN", 11, MINT)
+	write(Vector2(65,694), "本机自动存档 · 建议戴耳机 · 覆盖旧调查前会再次确认", 12, DIM)
+
+
+func draw_controls() -> void:
+	draw_rect(Rect2(0,0,1280,720),Color(0.008,0.016,0.024,0.82))
+	slab(Rect2(200,83,880,560),MINT,0.98)
+	code(Vector2(238,123), "FIELD MANUAL / 事故调查员操作手册", 12)
+	write(Vector2(238,172), "先找记录，再回调查台核验。", 29)
+	var keys := ["W A S D / 鼠标", "E", "Shift / F", "M", "Esc / H", "R（出现提示时）"]
+	var descriptions := ["移动 / 环视", "调查物件；在 G 门切换晨区与暮区", "奔跑 / 断相脉冲：需同区、无遮挡，每轮两次", "切换地图预览，不会改变你所在的时态", "暂停 / 查看操作说明", "撤销本轮接案签字，保留已归档证据"]
+	for i in range(keys.size()):
+		var y := 226.0 + i * 45.0
+		write(Vector2(241,y),keys[i],16,MINT)
+		write(Vector2(465,y),descriptions[i],16,WHITE)
+		draw_line(Vector2(239,y+14),Vector2(1039,y+14),alpha(DIM,0.14),1.0)
+	write(Vector2(240,531), "暮区取回的现场记录，要回晨区 A-01 才能归档。", 17, AMBER)
+	write(Vector2(240,561), "开局先查 B-17；不用背完所有规则，靠近物件会出现提示。", 15, DIM)
+	button(Rect2(796,585,242,39),"controls_back","Esc / Enter  返回")
+
+
 func draw_intro() -> void:
-	code(Vector2(60, 58), "C O R R I D O R   /   O R B I T A L   A R C H I V E", 13, MINT)
-	write(Vector2(58, 143), "回廊", 68)
-	write(Vector2(63, 183), "借来的明天", 23, DIM)
-	draw_line(Vector2(61, 201), Vector2(158, 201), alpha(MINT, 0.58), 1.0)
-	code(Vector2(1084, 58), "HABITAT / 001", 12, DIM)
+	code(Vector2(60,58), "CORRIDOR / INCIDENT BRIEFING", 13)
+	write(Vector2(58,143), "回廊", 68)
+	write(Vector2(63,183), "借来的明天", 23, DIM)
 	var captions := [
-		["近未来 · 人类第一座环形深空居住站", "回廊曾经只有一套时钟。事故发生那天，居住带被扭曲，两个区段从此再也无法对时。"],
-		["事故档案 · 最大时差 1 : 1000", "晨区过一秒，暮区已经过了十六分四十秒。居民开始在相同的门牌后，加上不同的区名。"],
-		["当前任务 · 寻找失联同事", "回廊事故调查处指派你寻找林岑。他最后一次刷卡，发生在晨区 B-17 办公室。"],
+		["01 / 寻人任务", "林岑失联了。事故调查处让你去晨区 B-17，核对他最后一次刷卡的记录。"],
+		["02 / 两套时钟", "同一座空间站，晨暮两区的时间流速相差一千倍。两份记录上的时刻，不能直接比较。"],
+		["03 / 你的第一步", "靠近物件按 E 调查。到 G 门按 E 换区；带齐现场记录，再回晨区 A-01 核验。"],
 	]
-	var page := mini(int(game.intro_time / 9), 2)
-	var band := PackedVector2Array([Vector2(0, 483), Vector2(1280, 483), Vector2(1280, 720), Vector2(0, 720)])
-	var shade := Color(0.008, 0.015, 0.022)
-	draw_polygon(band, PackedColorArray([alpha(shade, 0.0), alpha(shade, 0.0), alpha(shade, 0.99), alpha(shade, 0.99)]))
-	code(Vector2(63, 578), "%02d  /  03" % (page + 1), 12, MINT)
-	write(Vector2(62, 611), captions[page][0], 20, WHITE)
-	write(Vector2(62, 646), captions[page][1], 17, DIM)
-	for index in range(3):
-		draw_rect(Rect2(62 + index * 36, 669, 28, 2), MINT if index == page else alpha(DIM, 0.28))
-	button(Rect2(1036, 628, 184, 43), "start", "Enter  进入调查")
+	var page: int = game.intro_page
+	slab(Rect2(48,476,1184,208),MINT,0.96)
+	write(Vector2(74,523),captions[page][0],23)
+	var lines := text_lines(captions[page][1],1100,18)
+	for i in range(lines.size()):
+		write(Vector2(74,560+i*27),lines[i],18,DIM)
+	code(Vector2(76,652),"%02d / 03    阅读后继续，不会自动进入游戏" % (page+1),12)
+	button(Rect2(694,621,210,42),"start","Space  跳过序幕",DIM)
+	button(Rect2(920,621,282,42),"intro_next","Enter  进入调查" if page == 2 else "Enter  下一条")
 
 
 func draw_hud() -> void:
 	var accent := MINT if game.phase == 0 else AMBER
 	draw_minimap()
-	draw_rect(Rect2(26, 272, 365, 51), Color(0.039, 0.057, 0.070, 0.85))
-	draw_rect(Rect2(26, 272, 2, 51), alpha(accent, 0.82))
-	write(Vector2(39, 290), "调查目标", 12, accent)
-	write(Vector2(39, 312), game.objective(), 15)
-	write(Vector2(39, 342), "G-01 西门 / G-02 东门 · 晨区地标 A = 调查台", 12, DIM)
-	if game.chapter == 2:
-		write(Vector2(39, 364), game.relay_status(), 12, AMBER if game.armed or game.patched else DIM)
+	var objective_lines := text_lines(game.objective(),340,15)
+	var hint_lines := text_lines(game.guidance(),340,12)
+	var relay_lines := text_lines(game.relay_status(),340,12) if game.chapter == 2 else PackedStringArray()
+	var objective_height := 33.0 + objective_lines.size() * 22.0
+	var panel_height := objective_height + hint_lines.size() * 18.0 + 10.0
+	if not relay_lines.is_empty(): panel_height += 6.0 + relay_lines.size() * 18.0
+	draw_rect(Rect2(26,272,365,panel_height),Color(0.039,0.057,0.070,0.94))
+	draw_rect(Rect2(26,272,2,panel_height),alpha(accent,0.82))
+	write(Vector2(39,290),"当前目标",12,accent)
+	for i in range(objective_lines.size()):
+		write(Vector2(39,313+i*22),objective_lines[i],15)
+	var hint_y := 289.0 + objective_height
+	for i in range(hint_lines.size()):
+		write(Vector2(39,hint_y+i*18),hint_lines[i],12,DIM)
+	for i in range(relay_lines.size()):
+		write(Vector2(39,hint_y+hint_lines.size()*18+6+i*18),relay_lines[i],12,AMBER)
 	draw_rect(Rect2(1050, 28, 203, 76), Color(0.039, 0.057, 0.070, 0.78))
 	write(Vector2(1064, 54), "断相脉冲", 14, WHITE)
 	code(Vector2(1216, 54), "[F]", 12, accent)
@@ -131,18 +199,20 @@ func draw_hud() -> void:
 		draw_rect(Rect2(prompt_left, 544, prompt_width, 38), Color(0.035, 0.052, 0.065, 0.91))
 		write(Vector2(prompt_left + 20, 569), prompt, 16)
 	if game.note_timer > 0.0:
-		var subtitle: String = game.notice
-		var width := font.get_string_size(subtitle, HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x + 42.0
-		var left := 640.0 - width * 0.5
-		draw_rect(Rect2(left, 627, width, 44), Color(0.033, 0.046, 0.054, 0.87))
-		write(Vector2(left + 21.0, 655), subtitle, 17)
+		var subtitle_lines := text_lines(game.notice,1080,17)
+		var subtitle_height := 22.0 + subtitle_lines.size() * 24.0
+		var subtitle_y := 687.0 - subtitle_height
+		draw_rect(Rect2(79,subtitle_y,1122,subtitle_height),Color(0.033,0.046,0.054,0.93))
+		for i in range(subtitle_lines.size()):
+			write(Vector2(100,subtitle_y+27+i*24),subtitle_lines[i],17)
 	if game.mode == "paused":
 		draw_rect(Rect2(0, 0, 1280, 720), Color(0.015, 0.028, 0.049, 0.65))
-		slab(Rect2(491, 220, 300, 318), MINT)
+		slab(Rect2(491, 193, 300, 371), MINT)
 		write(Vector2(519, 315), "调查暂停", 36)
 		button(Rect2(520, 345, 242, 48), "resume", "Esc / Enter 继续调查")
 		button(Rect2(520, 410, 242, 48), "quit", "保存后退出")
-		button(Rect2(520, 474, 242, 42), "restart_prompt", "重新开始调查", DIM)
+		button(Rect2(520, 474, 242, 34), "controls", "H  操作说明", DIM)
+		button(Rect2(520, 520, 242, 31), "restart_prompt", "重新开始调查", DIM)
 
 
 func draw_minimap() -> void:
@@ -233,7 +303,9 @@ func draw_terminal() -> void:
 	if game.note_timer > 0.0:
 		draw_line(Vector2(405, 594), Vector2(1145, 594), alpha(DIM, 0.21), 1.0)
 		code(Vector2(406, 620), "SYSTEM", 11, accent)
-		write(Vector2(482, 620), game.notice, 15, WHITE)
+		var notice_lines := text_lines(game.notice,650,14)
+		for i in range(notice_lines.size()):
+			write(Vector2(482,610+i*19),notice_lines[i],14,WHITE)
 
 
 func draw_case_index(accent: Color, is_keypad: bool) -> void:
@@ -288,7 +360,7 @@ func draw_evidence(accent: Color) -> void:
 	elif game.ready_to_send():
 		button(Rect2(406, 419, 350, 44), "send", "Enter  向站外发送完整账本", accent)
 	else:
-		write(Vector2(407, 385), "现场记录齐全后，可在此提交推理。", 17, DIM)
+		write(Vector2(407, 385), "先按左上角目标取证，再回这里提交推理。", 17, DIM)
 		if game.can_confirm_again():
 			button(Rect2(406, 419, 350, 44), "accept", "确认接案 · 签收复核 A-42", AMBER)
 
@@ -347,6 +419,6 @@ func draw_restart() -> void:
 	draw_rect(Rect2(0, 0, 1280, 720), Color(0.02, 0.04, 0.07, 0.78))
 	slab(Rect2(375, 210, 530, 287), AMBER)
 	write(Vector2(410, 290), "重新开始调查？", 30)
-	write(Vector2(410, 340), "这会清除当前玩家的章节进度和证据。", 18, DIM)
+	write(Vector2(410, 340), "确认后清除本机章节与证据；取消则保留。", 18, DIM)
 	button(Rect2(410, 405, 193, 45), "cancel_restart", "Esc  返回", MINT)
 	button(Rect2(624, 405, 248, 45), "restart_case", "清除进度并开始新调查", AMBER)

@@ -9,6 +9,13 @@ class MemoryProfile extends Node:
 	func choose_tactic(_lap: int, _gates: Array, _sprint: int) -> void:
 		pass
 
+class MemoryExterior extends Node3D:
+	func animate(_seconds: float) -> void:
+		pass
+	func finish() -> void:
+		pass
+
+
 func _ready() -> void:
 	station = Station.new()
 	station.use_audit_monitor_prop = false
@@ -17,6 +24,8 @@ func _ready() -> void:
 	build_player()
 	build_boss()
 	build_audio()
+	exterior = MemoryExterior.new()
+	add_child(exterior)
 	profile = MemoryProfile.new()
 	add_child(profile)
 	var layer := CanvasLayer.new()

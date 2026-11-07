@@ -33,7 +33,11 @@ var exterior: Node3D
 var boss: Node3D
 var boss_rig: Node3D
 var boss_eye: MeshInstance3D
-var mode := "intro"
+var mode := "menu"
+var controls_return := "menu"
+var restart_return := "paused"
+var intro_page := 0
+var fresh_investigation := false
 var phase := 0
 var map_phase := 0
 var chapter := 0
@@ -179,20 +183,41 @@ func build_boss() -> void:
 
 
 func _process(delta: float) -> void:
-	if mode == "intro":
-		intro_time += delta
-		exterior.animate(intro_time)
-		if intro_time >= 27.0:
-			start_game()
-	elif note_timer > 0.0 and mode in ["audit", "world"]:
+	var opening := mode in ["menu", "intro"] or (mode == "controls" and controls_return == "menu") or (mode == "restart_confirm" and restart_return == "menu")
+	if opening:
+		update_opening(delta)
+	else:
+		exterior.animate_window(delta)
+	if note_timer > 0.0 and mode in ["audit", "world"]:
 		note_timer -= delta
 	if mode == "world":
 		station.animate_instruments(time_in_lap)
-	if mode != "intro":
-		exterior.animate_window(delta)
 	optics.set_shader_parameter("transition", clampf((shift_cooldown - 1.02) * 3.0, 0.0, 1.0))
-	optics.set_shader_parameter("defocus", 1.0 if mode in ["audit", "keypad", "paused", "restart_confirm"] else 0.0)
+	optics.set_shader_parameter("defocus", 1.0 if mode in ["audit", "keypad", "paused", "restart_confirm", "controls"] else 0.0)
 	interface.queue_redraw()
+
+
+func update_opening(delta: float) -> void:
+	intro_time += delta
+	exterior.animate(intro_time)
+
+
+func has_progress() -> bool:
+	return chapter > 0 or laps > 1 or evidence.has(true) or solved or cleared
+
+
+func begin_intro() -> void:
+	intro_time = 0.0
+	intro_page = 0
+	set_mode("intro")
+
+
+func advance_intro() -> void:
+	if mode != "intro": return
+	if intro_page < 2:
+		intro_page += 1
+	else:
+		start_game()
 
 
 func _physics_process(delta: float) -> void:
@@ -232,16 +257,33 @@ func _input(event: InputEvent) -> void:
 		handle_action(interface.button_at(event.position))
 	elif event is InputEventKey and event.pressed and not event.echo:
 		if event.physical_keycode == KEY_ESCAPE:
-			if mode == "restart_confirm":
-				set_mode("paused")
+			if mode == "controls":
+				set_mode(controls_return)
+			elif mode == "restart_confirm":
+				set_mode(restart_return)
 			elif mode in ["audit", "keypad", "paused"]:
 				set_mode("world")
 			elif mode == "world":
 				set_mode("paused")
 			return
+		if event.physical_keycode == KEY_H and mode in ["menu", "world", "paused"]:
+			handle_action("controls")
+			return
 		match mode:
+			"menu":
+				if event.physical_keycode == KEY_ENTER:
+					handle_action("continue" if has_progress() else "new_case")
+				elif event.physical_keycode == KEY_N:
+					handle_action("new_case")
+				elif event.physical_keycode == KEY_Q:
+					handle_action("quit")
+			"controls":
+				if event.physical_keycode in [KEY_ENTER, KEY_H]:
+					set_mode(controls_return)
 			"intro":
-				if event.physical_keycode == KEY_ENTER or event.physical_keycode == KEY_SPACE:
+				if event.physical_keycode == KEY_ENTER:
+					advance_intro()
+				elif event.physical_keycode == KEY_SPACE:
 					start_game()
 			"keypad":
 				if event.physical_keycode >= KEY_0 and event.physical_keycode <= KEY_9:
@@ -276,7 +318,25 @@ func _input(event: InputEvent) -> void:
 
 func handle_action(action: String) -> void:
 	match action:
-		"start": start_game()
+		"start":
+			if mode == "intro": start_game()
+		"continue":
+			if mode == "menu" and has_progress(): start_game()
+		"new_case":
+			if mode != "menu": return
+			if has_progress():
+				restart_return = "menu"
+				set_mode("restart_confirm")
+			else:
+				fresh_investigation = true
+				begin_intro()
+		"intro_next": advance_intro()
+		"controls":
+			if mode in ["menu", "world", "paused"]:
+				controls_return = mode
+				set_mode("controls")
+		"controls_back":
+			if mode == "controls": set_mode(controls_return)
 		"resume": set_mode("world")
 		"send": begin_upload()
 		"align_submit": submit_alignment(alignment_fields)
@@ -287,10 +347,13 @@ func handle_action(action: String) -> void:
 				set_mode("world")
 				say("已复核 A-42。按 R 重新进入本轮，或去暮区查看执行结果。")
 		"loop": reset_lap("站外：收到。告诉我还有谁。")
-		"restart_prompt": set_mode("restart_confirm")
-		"cancel_restart": set_mode("paused")
+		"restart_prompt":
+			restart_return = mode
+			set_mode("restart_confirm")
+		"cancel_restart": set_mode(restart_return)
 		"restart_case":
 			if mode == "restart_confirm":
+				fresh_investigation = true
 				chapter = 0
 				laps = 0
 				evidence = [false, false, false]
@@ -300,6 +363,7 @@ func handle_action(action: String) -> void:
 				tactic = "patrol"
 				tactic_source = "rules"
 				reset_lap("新调查已建立。前往晨区 B-17。")
+				if restart_return == "menu": begin_intro()
 		"quit": get_tree().quit()
 		_:
 			if action.begins_with("align_"):
@@ -325,7 +389,8 @@ func start_game() -> void:
 	camera.make_current()
 	spawn_at_desk()
 	set_mode("ending" if cleared else "world")
-	say("站内广播：调查员，请确认接案。林岑最后一次刷卡，就在刚才。")
+	if not cleared:
+		say("站内广播：林岑失联。先去晨区 B-17 核对门禁记录。" if not has_progress() else "审计匣已载入。" + objective())
 
 
 func spawn_at_desk() -> void:
@@ -388,7 +453,7 @@ func interaction_prompt() -> String:
 			return "[E] 确认接案 / A-01    ·    也可直接前往 B-17"
 		if chapter == 1 and not case_accepted and not evidence.has(true):
 			return "[E] 查看任务详情 / A-01    ·    暂缓确认"
-		return "[E] 打开 2D 调查台 / A-01"
+		return "[E] 打开证据工作台 / A-01"
 	if tile in station.GATES:
 		return "[E] 穿过换相门  →  %s" % ("暮区" if phase == 0 else "晨区")
 	if tile == station.OFFICE:
@@ -543,29 +608,43 @@ func inspect_relay() -> void:
 func objective() -> String:
 	match chapter:
 		0:
-			if not evidence[0]: return "前往晨区 B-17，调查林岑的门禁记录。"
-			if not evidence[1]: return "从换相门进入暮区，找另一份 B-17 记录。"
-			return "带着日志回到调查台 A-01，核对警报编号。"
+			if not evidence[0]: return "晨区 B-17：调查林岑的门禁记录。"
+			if not evidence[1]: return "到 G 门按 E 换区，再查暮区 B-17。"
+			return "回晨区 A-01：归档日志，核对事件。"
 		1:
 			if case_accepted: return "A-42 已签收。按 R 可撤销本轮接案。"
-			if not evidence[1]: return "在晨区调查台查看任务授权，暂缓确认。"
-			if not evidence[0]: return "查阅晨区 R-03 的配额单。"
-			if not evidence[2]: return "去暮区 B-17，看看林岑是否还活着。"
-			return "回到调查台 A-01，查清是谁授权扣款。"
+			if not evidence[1]: return "晨区 A-01：查看授权，暂缓签字。"
+			if not evidence[0]: return "晨区 R-03：取得配额授权单。"
+			if not evidence[2]: return "暮区 B-17：查看未签字的结果。"
+			return "回晨区 A-01：核对授权与执行人。"
 		3:
-			if not evidence[0] or not evidence[1]: return "查阅晨、暮两区 C-04 的同步记录。"
-			return "回到调查台 A-01，换算两条记录的发生顺序。"
+			if not evidence[0] or not evidence[1]: return "晨暮 C-04：各取一份同步记录。"
+			return "回晨区 A-01：换算时间，判断先后。"
 		4:
-			if not evidence[0]: return "前往暮区 D-09，找林岑的寿命扣款。"
-			if not evidence[1] or not evidence[2]: return "比对晨、暮两区 L-06 的交易流水。"
-			return "回到调查台 A-01，追踪被拨走的 38 年。"
+			if not evidence[0]: return "暮区 D-09：取得林岑的扣款凭证。"
+			if not evidence[1] or not evidence[2]: return "晨暮 L-06：查同一交易的资金去向。"
+			return "回晨区 A-01：核对 38 年的去向。"
 		_:
 			if upload > 0.0: return "站外传输中  //  剩余 %.1f 秒" % upload
-			if patched: return "回到晨区 A-01，从调查台外发证据。"
-			if armed: return "换相到暮区，接上 R-03 的 E-7 线缆。"
-			if solved: return "去晨区 R-03，打开 E-7 应急开关。"
-			if not evidence[0] or not evidence[1]: return "比对晨、暮两区 R-03 的应急线路。"
-			return "回到 A-01，把两份线路记录接起来。"
+			if patched: return "回晨区 A-01：发送完整账本。"
+			if armed: return "暮区 R-03：接上 E-7 线缆。"
+			if solved: return "晨区 R-03：合上 E-7 应急开关。"
+			if not evidence[0] or not evidence[1]: return "晨暮 R-03：各取一份 E-7 线路记录。"
+			return "回晨区 A-01：核验两份 E-7 线路记录。"
+
+
+func guidance() -> String:
+	if map_phase != phase:
+		return "M 只是地图预览；到 G 门按 E 才能换区。"
+	if unbanked:
+		return "现场记录尚未归档，先回晨区 A-01。"
+	if boss_live:
+		return "Shift 奔跑 · F 断相：需同区、无遮挡。"
+	if chapter == 1 and case_accepted:
+		return "R 撤销本轮签字，已归档证据不会丢失。"
+	if chapter == 0 and not evidence[0]:
+		return "WASD 移动 · 鼠标环视 · 靠近后按 E 调查。"
+	return "Esc 暂停 · H 操作说明 · 戴耳机听脚步方向。"
 
 
 func chapter_title() -> String:
@@ -863,6 +942,10 @@ func banked_evidence() -> Array:
 
 
 func apply_profile(data: Dictionary) -> void:
+	# An outstanding backend read must not undo an explicitly chosen new investigation.
+	if fresh_investigation:
+		store_progress()
+		return
 	chapter = clampi(int(data.get("chapter", 0)), 0, 4)
 	laps = maxi(1, int(data.get("laps", 1)))
 	evidence = data.get("evidence", [false, false, false]).duplicate()

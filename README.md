@@ -37,3 +37,11 @@ WASD 移动，鼠标环视，Shift 奔跑，E 交互，F 眩晕。左上角的�
 音源、裁切参数与附带许可记录在 assets/audio/sources.json 和 assets/audio/SONNISS-LICENSE.pdf；未向 AI 服务上传这些录音。音乐和配音尚未加入。建议戴耳机体验方向感，并在现场电脑调整系统音量。
 
 音效检查（Godot 4.3）：`--headless --path 项目目录 --script res://tests/audio_test.gd`；左右声道与距离衰减检查：`--path 项目目录 --rendering-method gl_compatibility --script res://tests/audio_spatial_check.gd`，后者需要真实音频驱动。
+
+## 开始界面与第一轮引导
+
+启动后停在开始界面，不会自动进入游戏。有已归档进度时按 Enter 继续；按 N 开新调查，必须确认后才清除旧进度。继续调查会回到晨区 A-01，不是恢复上次站立位置。序幕按 Enter 逐条阅读，Space 可跳过。
+
+H 查看操作说明；从暂停页打开说明，关闭后仍保持暂停。M 仅切换地图预览，真正换区要在 G 门按 E。HUD 会按当前线索、未归档记录和追逐状态给提示，目标、广播与终端通知支持换行。未加入跳跃，地图/碰撞和资产保持队友版本。
+
+新增回归：tests/menu_test.gd（状态、键盘、存档保护、换行）和 tests/menu_visual_check.gd（1280×720 / 1920×1080 鼠标流程；命令行参数与 visual_check.gd 相同）。
