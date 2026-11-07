@@ -107,6 +107,8 @@ func draw_hud() -> void:
 	write(Vector2(39, 290), "调查目标", 12, accent)
 	write(Vector2(39, 312), game.objective(), 15)
 	write(Vector2(39, 342), "G-01 西门 / G-02 东门 · 晨区地标 A = 调查台", 12, DIM)
+	if game.chapter == 2:
+		write(Vector2(39, 364), game.relay_status(), 12, AMBER if game.armed or game.patched else DIM)
 	draw_rect(Rect2(1050, 28, 203, 76), Color(0.039, 0.057, 0.070, 0.78))
 	write(Vector2(1064, 54), "断相脉冲", 14, WHITE)
 	code(Vector2(1216, 54), "[F]", 12, accent)

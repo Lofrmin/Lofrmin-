@@ -81,6 +81,22 @@ func run() -> void:
 	game.keypad_entry = "7138"
 	game.press_keypad("enter")
 	check(game.evidence[1] and game.mode == "world", "existing keypad unchanged")
+	check(game.has_method("relay_status"), "relay status is visible")
+	if not game.has_method("relay_status"):
+		game.free()
+		quit(1)
+		return
+	game.chapter = 2
+	game.solved = true
+	game.armed = false
+	game.patched = false
+	game.phase = 0
+	check(game.relay_status().contains("线路已核验"), "relay starts after evidence verification")
+	game.inspect_relay()
+	check(game.armed and game.relay_status().contains("晨区"), "morning switch is visible")
+	game.phase = 1
+	game.inspect_relay()
+	check(game.patched and game.relay_status().contains("暮区"), "dusk relay is visible")
 	game.evidence = [true,true,true]
 	game.set_mode("audit")
 	game.answer(1)

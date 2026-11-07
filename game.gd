@@ -350,6 +350,18 @@ func audit_reflection() -> String:
 	return "把两份记录带回来。审计匣会保留你已经核验的证据。"
 
 
+func relay_status() -> String:
+	if chapter != 2:
+		return "E-7 / 未接通"
+	if patched:
+		return "E-7 / 暮区中继已接通 · 回晨区 A-01 外发"
+	if armed:
+		return "E-7 / 晨区开关已合上 · 前往暮区接线"
+	if solved:
+		return "E-7 / 两区线路已核验 · 回晨区合闸"
+	return "E-7 / 未接通 · 先核对两区线路"
+
+
 func nearby() -> Vector2i:
 	var tile: Vector2i = station.cell(player.position)
 	if player.position.distance_to(station.point(tile)) < 1.82:
