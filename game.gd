@@ -35,6 +35,7 @@ var boss: Node3D
 var boss_rig: Node3D
 var boss_eye: MeshInstance3D
 var boss_lamp: OmniLight3D
+var boss_body := CapsuleShape3D.new()
 var mode := "menu"
 var controls_return := "menu"
 var restart_return := "paused"
@@ -171,6 +172,8 @@ func build_player() -> void:
 
 
 func build_boss() -> void:
+	boss_body.height = 1.67
+	boss_body.radius = 0.30
 	boss = Node3D.new()
 	add_child(boss)
 	boss_rig = HunterVisual.new()
@@ -925,7 +928,9 @@ func update_boss(delta: float, sprint: bool) -> void:
 		if sprint and not seen:
 			sprint_observed = 1
 	boss_chasing = same_phase and (seen or tracking_time > 0.0 or upload > 0.0)
-	if same_phase and distance < 1.10 and not protected and not dev_god:
+	var player_target := Vector3(player.position.x, 0, player.position.z)
+	var direct_chase := seen and boss_motion_fraction(boss.position, player_target) >= 1.0
+	if direct_chase and distance < 1.10 and not protected and not dev_god:
 		reset_lap("追债人完成结算。审计匣里的记录随你回到了开场。")
 		return
 	if charge_warning > 0.0:
@@ -963,23 +968,64 @@ func update_boss(delta: float, sprint: bool) -> void:
 	path_timer -= delta
 	var cell_at_boss: Vector2i = station.cell(boss.position)
 	var center: Vector3 = station.point(cell_at_boss)
-	if boss_route.is_empty() or (path_timer <= 0.0 and boss.position.distance_to(center) < 0.22):
-		boss_route = station.path(boss_phase, cell_at_boss, destination)
-		if not boss_route.is_empty() and boss.position.distance_to(center) < 0.22:
-			boss_route.pop_front()
-		path_timer = 0.30
 	var target := center
-	if not boss_route.is_empty():
-		target = station.point(boss_route[0])
-	elif seen and cell_at_boss == station.cell(player.position):
-		target = Vector3(player.position.x, 0, player.position.z)
+	if direct_chase:
+		# Grid centers are only waypoints around obstacles, never the visible player's final position.
+		target = player_target
+		boss_route.clear()
+	else:
+		if boss_route.is_empty() or (path_timer <= 0.0 and boss.position.distance_to(center) < 0.22):
+			boss_route = station.path(boss_phase, cell_at_boss, destination)
+			if not boss_route.is_empty() and boss.position.distance_to(center) < 0.22:
+				boss_route.pop_front()
+			path_timer = 0.30
+		if not boss_route.is_empty():
+			target = station.point(boss_route[0])
+		if seen:
+			var detour := boss_detour_path(player_target)
+			if detour.size() > 1: target = detour[1]
 	if boss.position.distance_to(target) < 0.035:
 		if not boss_route.is_empty():
 			boss_route.pop_front()
 		return
 	boss.look_at(target, Vector3.UP)
 	var speed := 7.2 if charge_time > 0.0 else (4.45 if upload > 0.0 else (3.77 if seen else 3.27))
-	boss.position = boss.position.move_toward(target, speed * delta)
+	var next := boss.position.move_toward(target, speed * delta)
+	boss.position = boss.position.lerp(next, boss_motion_fraction(boss.position, next))
+
+
+func boss_motion_fraction(origin: Vector3, target: Vector3) -> float:
+	var query := PhysicsShapeQueryParameters3D.new()
+	query.shape = boss_body
+	query.transform = Transform3D(Basis(), origin + Vector3.UP * 0.86)
+	query.motion = target - origin
+	query.margin = 0.005
+	query.exclude = [player.get_rid()]
+	var space := get_world_3d().direct_space_state
+	# cast_motion ignores shapes already overlapping at the origin.
+	if not space.intersect_shape(query, 1).is_empty(): return 0.0
+	var safe: float = space.cast_motion(query)[0]
+	return maxf(0.0, safe - 0.01 / maxf(query.motion.length(), 0.01)) if safe < 1.0 else 1.0
+
+
+func boss_detour_path(target: Vector3) -> PackedVector3Array:
+	# shortcut: nearby grid centers route around furniture; dense interiors would need baked navigation.
+	var route := AStar3D.new()
+	route.add_point(0, boss.position)
+	route.add_point(1, target)
+	var tile: Vector2i = station.cell(boss.position)
+	for z in range(-1, 2):
+		for x in range(-1, 2):
+			var candidate := tile + Vector2i(x, z)
+			if not station.walkable(boss_phase, candidate): continue
+			var point: Vector3 = station.point(candidate)
+			if point.distance_to(boss.position) < 0.05 or point.distance_to(target) < 0.05: continue
+			route.add_point(route.get_point_count(), point)
+	for first in range(route.get_point_count()):
+		for second in range(first + 1, route.get_point_count()):
+			if boss_motion_fraction(route.get_point_position(first), route.get_point_position(second)) >= 1.0:
+				route.connect_points(first, second)
+	return route.get_point_path(0, 1)
 
 
 func has_sight() -> bool:
