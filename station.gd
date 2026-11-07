@@ -20,6 +20,7 @@ const LAB := Vector2i(4, 3)
 const MEDICAL := Vector2i(4, 5)
 const LEDGER := Vector2i(8, 5)
 const GATES := [Vector2i(1, 3), Vector2i(13, 3)]
+const RETURN_MARKERS := [Vector2i(13,1), Vector2i(12,3), Vector2i(2,3), Vector2i(4,3), Vector2i(8,3), Vector2i(4,5), Vector2i(8,5), Vector2i(1,9), Vector2i(13,9)]
 
 var maps: Array[Node3D] = []
 var grids: Array[AStarGrid2D] = []
@@ -29,6 +30,8 @@ var witnesses: Array[Node3D] = []
 var box_meshes: Dictionary = {}
 var instruments: Array[Node3D] = []
 var observation_glass: ShaderMaterial
+var audit_labels: Array[Label3D] = []
+var return_signs: Array[Label3D] = []
 
 
 func build() -> void:
@@ -62,7 +65,44 @@ func build() -> void:
 					build_tile(layer, phase, tile)
 				else:
 					grid.set_point_solid(tile)
+	for phase in range(2):
+		build_return_markers(phase)
 	set_phase(0)
+
+
+func return_hint(phase: int, tile: Vector2i) -> Dictionary:
+	var target: Vector2i = AUDIT
+	var label := "A-01 / 回调查台"
+	if phase == 1:
+		var west: Array[Vector2i] = path(phase, tile, GATES[0])
+		var east: Array[Vector2i] = path(phase, tile, GATES[1])
+		var gate := 1 if west.is_empty() or (not east.is_empty() and east.size() < west.size()) else 0
+		target = GATES[gate]
+		label = "G-0%d / 换回晨区" % (gate + 1)
+	var route: Array[Vector2i] = path(phase, tile, target)
+	if route.size() < 2:
+		return {}
+	return {"target": target, "direction": route[1] - tile, "label": label}
+
+
+func build_return_markers(phase: int) -> void:
+	var accent: StandardMaterial3D = palette.mint if phase == 0 else palette.amber
+	for tile in RETURN_MARKERS:
+		var hint: Dictionary = return_hint(phase, tile)
+		if hint.is_empty(): continue
+		var arrow := Node3D.new()
+		maps[phase].add_child(arrow)
+		arrow.position = point(tile) + Vector3(0, 0.055, 0.7)
+		var direction: Vector3 = Vector3(hint.direction.x, 0, hint.direction.y)
+		arrow.rotation.y = Vector3.FORWARD.signed_angle_to(direction, Vector3.UP)
+		box(arrow, Vector3.ZERO, Vector3(0.065, 0.012, 0.52), accent)
+		for side in [-1, 1]:
+			var wing: MeshInstance3D = box(arrow, Vector3(side * 0.10, 0, -0.19), Vector3(0.055, 0.012, 0.28), accent)
+			wing.rotation.y = side * PI / 4.0
+		var label: Label3D = sign_at(maps[phase], point(tile) + Vector3(0, 2.35, 0.7), hint.label, accent.albedo_color)
+		label.font_size = 30
+		label.pixel_size = 0.0025
+		return_signs.append(label)
 
 
 func animate_instruments(seconds: float) -> void:
@@ -212,6 +252,8 @@ func fixture(layer: Node3D, tile: Vector2i, phase: int, accent: Material) -> voi
 	screen.material_override = palette.display if phase == 0 else palette.display_warm
 	layer.add_child(screen)
 	screen.position = desk + Vector3(0, 1.23, 0.068)
+	if tile == AUDIT:
+		build_audit_details(layer, desk, screen)
 	var plate := sign_at(layer, desk + Vector3(0, 1.86, 0.12), heading, accent.albedo_color)
 	plate.billboard = BaseMaterial3D.BILLBOARD_DISABLED
 	plate.pixel_size = 0.00165
@@ -252,6 +294,41 @@ func fixture(layer: Node3D, tile: Vector2i, phase: int, accent: Material) -> voi
 				box(layer, rack + Vector3(0, height, 0.253), Vector3(0.36, 0.19, 0.07), palette.wall)
 				box(layer, rack + Vector3(0.11, height, 0.301), Vector3(0.07, 0.036, 0.024), accent)
 
+
+func build_audit_details(layer: Node3D, desk: Vector3, screen: MeshInstance3D) -> void:
+	# Decoration stays inside the existing desk footprint or its tabletop wings.
+	box(layer, desk + Vector3(0, 0.95, 0), Vector3(2.65, 0.12, 0.78), palette.wall)
+	box(layer, desk + Vector3(0, 1.04, -0.04), Vector3(0.13, 0.19, 0.10), palette.frame)
+	box(layer, desk + Vector3(0, 1.015, 0.23), Vector3(0.65, 0.035, 0.20), palette.frame)
+	for row in range(3):
+		for col in range(10):
+			box(layer, desk + Vector3(-0.27 + col * 0.06, 1.038, 0.17 + row * 0.055), Vector3(0.045, 0.009, 0.035), palette.wall)
+	box(layer, desk + Vector3(0.48, 1.035, 0.23), Vector3(0.13, 0.05, 0.20), palette.frame)
+	for side in [-1, 1]:
+		box(layer, desk + Vector3(side * 0.94, 1.025, 0.03), Vector3(0.53, 0.025, 0.62), palette.frame)
+		box(layer, desk + Vector3(side * 0.94, 1.043, 0.03), Vector3(0.47, 0.009, 0.56), palette.white)
+		box(layer, desk + Vector3(side * 0.94, 1.052, -0.22), Vector3(0.15, 0.02, 0.04), palette.frame)
+		var paper: Label3D = sign_at(layer, desk + Vector3(side * 0.94, 1.052, 0.03), "授权单\nA-42\n复核人：____" if side < 0 else "审计匣\n现场记录\n入库待核验", Color("17252a"))
+		paper.name = "AuthorizationPaper" if side < 0 else "EvidenceFolder"
+		paper.billboard = BaseMaterial3D.BILLBOARD_DISABLED
+		paper.rotation.x = -PI / 2.0
+		paper.font_size = 30
+		paper.pixel_size = 0.0022
+		paper.outline_size = 0
+		paper.no_depth_test = false
+	screen.material_override = palette.ink
+	var status: Label3D = sign_at(layer, desk + Vector3(0, 1.23, 0.077), "", Color("a7dcd0"))
+	status.name = "AuditStatus"
+	status.billboard = BaseMaterial3D.BILLBOARD_DISABLED
+	status.font_size = 30
+	status.pixel_size = 0.0016
+	status.outline_size = 0
+	audit_labels.append(status)
+
+
+func update_audit_status(text: String) -> void:
+	for label in audit_labels:
+		label.text = text
 
 func build_witness(layer: Node3D, center: Vector3) -> void:
 	var figure := Node3D.new()

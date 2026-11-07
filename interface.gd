@@ -106,6 +106,7 @@ func draw_hud() -> void:
 	draw_rect(Rect2(26, 272, 2, 51), alpha(accent, 0.82))
 	write(Vector2(39, 290), "调查目标", 12, accent)
 	write(Vector2(39, 312), game.objective(), 15)
+	write(Vector2(39, 342), "G-01 西门 / G-02 东门 · 晨区地标 A = 调查台", 12, DIM)
 	draw_rect(Rect2(1050, 28, 203, 76), Color(0.039, 0.057, 0.070, 0.78))
 	write(Vector2(1064, 54), "断相脉冲", 14, WHITE)
 	code(Vector2(1216, 54), "[F]", 12, accent)
@@ -167,6 +168,7 @@ func draw_minimap() -> void:
 			var mark := map_symbol(tile)
 			if mark == "◇":
 				draw_polyline(PackedVector2Array([center + Vector2(0, -3), center + Vector2(3, 0), center + Vector2(0, 3), center + Vector2(-3, 0), center + Vector2(0, -3)]), tint, 1.0, true)
+				code(center + Vector2(5, 3), str(game.station.GATES.find(tile) + 1), 10, tint)
 			elif not mark.is_empty():
 				code(center + Vector2(-3, 3), mark, 10, tint)
 	var position: Vector3 = game.player.position
@@ -257,6 +259,7 @@ func draw_case_index(accent: Color, is_keypad: bool) -> void:
 
 
 func draw_evidence(accent: Color) -> void:
+	write(Vector2(406, 575), game.audit_reflection(), 16, AMBER if game.chapter == 1 else DIM)
 	var lines: Array = game.evidence_lines()
 	var count := 0
 	for line in lines:
@@ -273,6 +276,9 @@ func draw_evidence(accent: Color) -> void:
 		if unlocked:
 			draw_polyline(PackedVector2Array([Vector2(1128, y - 6), Vector2(1132, y - 2), Vector2(1140, y - 10)]), accent, 1.7, true)
 	if game.puzzle_available():
+		if game.chapter == 0:
+			draw_alignment(accent)
+			return
 		write(Vector2(407, 386), game.puzzle_question(), 22, WHITE)
 		var choices: Array = game.puzzle_choices()
 		for index in range(choices.size()):
@@ -283,6 +289,24 @@ func draw_evidence(accent: Color) -> void:
 		write(Vector2(407, 385), "现场记录齐全后，可在此提交推理。", 17, DIM)
 		if game.can_confirm_again():
 			button(Rect2(406, 419, 350, 44), "accept", "确认接案 · 签收复核 A-42", AMBER)
+
+
+func draw_alignment(accent: Color) -> void:
+	write(Vector2(406, 376), "选出两项事件身份，对齐晨暮记录", 20, WHITE)
+	var fields := ["device", "alarm", "clock"]
+	var left := ["1  门禁  V-17", "2  警报  #043", "3  时钟  09:00:01"]
+	var right := ["门禁  V-17", "警报  #043", "时钟  16:42:26"]
+	for i in range(3):
+		var y := 398.0 + i * 43.0
+		var selected: bool = fields[i] in game.alignment_fields
+		var color := accent if selected else DIM
+		button(Rect2(406, y, 739, 37), "align_" + fields[i], "", color)
+		write(Vector2(420, y + 25), "[√]" if selected else "[  ]", 16, color)
+		code(Vector2(465, y + 25), left[i], 17, color)
+		code(Vector2(875, y + 25), right[i], 17, color)
+		if selected:
+			draw_line(Vector2(710, y + 19), Vector2(848, y + 19), accent, 2.0, true)
+	button(Rect2(406, 533, 739, 33), "align_submit", "Enter  核验关联    /    点击或按 1、2、3 选择与取消", accent)
 
 
 func draw_keypad(accent: Color) -> void:

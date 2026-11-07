@@ -1,3 +1,13 @@
 .godot/
 backend/data/
 __pycache__/
+backups/
+build/
+dist/
+preview*.png
+preview*.png.import
+*.log
+.env
+.env.*
+*.sqlite3
+*.sqlite3-*

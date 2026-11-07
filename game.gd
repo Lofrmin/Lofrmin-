@@ -45,6 +45,7 @@ var threat := 0.0
 var case_accepted := false
 var cleared := false
 var evidence: Array = [false, false, false]
+var alignment_fields: Array[String] = []
 var unbanked := false
 var solved := false
 var armed := false
@@ -244,7 +245,12 @@ func _input(event: InputEvent) -> void:
 					handle_action("loop" if mode == "ending" else "resume")
 			"audit":
 				if event.physical_keycode in [KEY_1, KEY_2, KEY_3] and mode == "audit" and puzzle_available():
-					answer(event.physical_keycode - KEY_1)
+					if chapter == 0:
+						toggle_alignment(["device", "alarm", "clock"][event.physical_keycode - KEY_1])
+					else:
+						answer(event.physical_keycode - KEY_1)
+				elif event.physical_keycode == KEY_ENTER and chapter == 0:
+					submit_alignment(alignment_fields)
 				elif event.physical_keycode == KEY_ENTER and ready_to_send():
 					begin_upload()
 			"world":
@@ -263,6 +269,7 @@ func handle_action(action: String) -> void:
 		"start": start_game()
 		"resume": set_mode("world")
 		"send": begin_upload()
+		"align_submit": submit_alignment(alignment_fields)
 		"accept":
 			if can_confirm_again():
 				case_accepted = true
@@ -285,13 +292,17 @@ func handle_action(action: String) -> void:
 				reset_lap("新调查已建立。前往晨区 B-17。")
 		"quit": get_tree().quit()
 		_:
-			if action.begins_with("choice_"):
+			if action.begins_with("align_"):
+				toggle_alignment(action.trim_prefix("align_"))
+			elif action.begins_with("choice_"):
 				answer(int(action.get_slice("_", 1)))
 			elif action.begins_with("key_"):
 				press_keypad(action.get_slice("_", 1))
 
 
 func set_mode(next: String) -> void:
+	if mode == "audit" and next != "audit":
+		alignment_fields.clear()
 	mode = next
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if mode == "world" else Input.MOUSE_MODE_VISIBLE
 	interface.queue_redraw()
@@ -318,6 +329,25 @@ func spawn_at_desk() -> void:
 
 func update_witness() -> void:
 	station.update_witness(chapter, evidence[0], case_accepted)
+	station.update_audit_status(audit_status_text())
+
+
+func audit_status_text() -> String:
+	if cleared:
+		return "站外回执 / 已收讫\n审计匣：记录保留"
+	if chapter == 1:
+		return "A-42 / 已复核\n执行已触发 · R 返回确认前" if case_accepted else "A-42 / 待复核\n这一次，可以暂缓签字"
+	if chapter in [4, 2]:
+		return "A-42 / 授权已核验\n审计匣：记录保留"
+	return "任务 / 已签收\n前往 B-17 核对记录" if case_accepted else "任务 / 待签收\n寻找失联同事 林岑"
+
+
+func audit_reflection() -> String:
+	if chapter == 1:
+		return "同一个签字，暮区仍有人付出代价。按 R 返回确认前。" if case_accepted else "桌上的授权没有变。这次，先去暮区看看未签字的结果。"
+	if chapter in [4, 2]:
+		return "站内可以复位；已经交割的账目，却留在站外。"
+	return "把两份记录带回来。审计匣会保留你已经核验的证据。"
 
 
 func nearby() -> Vector2i:
@@ -360,6 +390,7 @@ func interact() -> void:
 			return
 		if chapter == 0 and not case_accepted and not evidence.has(true):
 			case_accepted = true
+			update_witness()
 			say("接案已签收。目标：晨区 B-17。按 M 查看地图。")
 			return
 		if chapter == 1 and phase == 0:
@@ -539,12 +570,36 @@ func can_confirm_again() -> bool:
 
 
 func answer(index: int) -> void:
-	if mode != "audit" or not puzzle_available():
+	if mode != "audit" or not puzzle_available() or chapter == 0:
 		return
 	if index != ANSWERS[chapter]:
 		say(["对照门禁设备编号和同一次警报，两边的时钟各走各的。", "把配额单的受益人和操作日志的最后签收者分开看。", "寻找在两份记录中都出现的线路编号。", "先把暮区计时除以 1000，再与晨区记录比较。", "查找同一个交易号，并确认总账是否随站内复位。"][chapter])
 		beep(155.0, 0.24)
 		return
+	complete_puzzle()
+
+
+func toggle_alignment(field: String) -> void:
+	if mode != "audit" or chapter != 0 or not puzzle_available() or field not in ["device", "alarm", "clock"]:
+		return
+	if field in alignment_fields:
+		alignment_fields.erase(field)
+	else:
+		alignment_fields.append(field)
+	interface.queue_redraw()
+
+
+func submit_alignment(fields: Array) -> void:
+	if mode != "audit" or chapter != 0 or not puzzle_available():
+		return
+	if fields.size() != 2 or not fields.has("device") or not fields.has("alarm"):
+		say("需要两项事件身份；不同步的钟面不是同一次事件的凭证。")
+		beep(155.0, 0.24)
+		return
+	complete_puzzle()
+
+
+func complete_puzzle() -> void:
 	beep(820.0, 0.26)
 	if chapter == 2:
 		solved = true
@@ -730,6 +785,7 @@ func threat_text() -> String:
 
 
 func reset_lap(message: String) -> void:
+	alignment_fields.clear()
 	laps += 1
 	if boss_live:
 		profile.choose_tactic(laps, gate_observed, sprint_observed)

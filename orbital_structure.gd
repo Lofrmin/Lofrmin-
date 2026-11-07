@@ -191,14 +191,14 @@ func polar(angle: float, radius: float, height: float, tangent := 0.0) -> Vector
 
 
 func place(surface: int, angle: float, radius: float, height: float, tangent: float, size: Vector3) -> void:
-	batches[surface].append(Transform3D(Basis(Vector3.UP, -angle).scaled_local(size), polar(angle, radius, height, tangent)))
+	batches[surface].append(Transform3D(Basis(Vector3.UP, -angle) * Basis.from_scale(size), polar(angle, radius, height, tangent)))
 
 
 func beam(surface: int, start: Vector3, end: Vector3, thickness: float, vertical := 0.0) -> void:
 	var offset := end - start
 	var basis := Basis.looking_at(offset, Vector3.UP)
 	var section := Vector3(thickness, vertical if vertical > 0.0 else thickness, offset.length() + 0.018)
-	batches[surface].append(Transform3D(basis.scaled_local(section), start.lerp(end, 0.5)))
+	batches[surface].append(Transform3D(basis * Basis.from_scale(section), start.lerp(end, 0.5)))
 
 
 func drum(radius: float, level: float, height: float, surface: int) -> void:
