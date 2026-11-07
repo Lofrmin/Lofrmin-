@@ -16,6 +16,7 @@ func _ready() -> void:
 	station.build()
 	build_player()
 	build_boss()
+	build_audio()
 	profile = MemoryProfile.new()
 	add_child(profile)
 	var layer := CanvasLayer.new()
@@ -40,7 +41,4 @@ func _process(_delta: float) -> void:
 	interface.queue_redraw()
 
 func _physics_process(_delta: float) -> void:
-	pass
-
-func beep(_frequency: float, _seconds: float) -> void:
 	pass

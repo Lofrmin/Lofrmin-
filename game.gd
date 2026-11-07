@@ -1,5 +1,6 @@
 extends Node3D
 
+const Sound := preload("res://audio.gd")
 const Station := preload("res://station.gd")
 const Interface := preload("res://interface.gd")
 const Profile := preload("res://profile.gd")
@@ -72,7 +73,7 @@ var sprint_observed := 0
 var tactic := "patrol"
 var tactic_gate := 0
 var tactic_source := "rules"
-var audio: AudioStreamPlayer
+var sound: Node
 var optics: ShaderMaterial
 
 
@@ -105,6 +106,7 @@ func _ready() -> void:
 	exterior.build(env)
 	build_player()
 	build_boss()
+	build_audio()
 	var post_layer := CanvasLayer.new()
 	post_layer.layer = 0
 	add_child(post_layer)
@@ -120,15 +122,18 @@ func _ready() -> void:
 	interface = Interface.new()
 	interface.game = self
 	canvas.add_child(interface)
-	audio = AudioStreamPlayer.new()
-	audio.volume_db = -13
-	add_child(audio)
 	profile = Profile.new()
 	add_child(profile)
 	profile.loaded.connect(apply_profile)
 	profile.tactic_ready.connect(apply_tactic)
 	profile.open()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+
+func build_audio() -> void:
+	sound = Sound.new()
+	add_child(sound)
+	sound.setup(boss)
 
 
 func build_player() -> void:
@@ -200,18 +205,23 @@ func _physics_process(delta: float) -> void:
 	var sprint := Input.is_physical_key_pressed(KEY_SHIFT) and move.length_squared() > 0
 	var speed := 6.25 if sprint else 4.45
 	player.velocity = Vector3(direction.x * speed, -6.0, direction.z * speed)
+	var previous_player := player.position
 	player.move_and_slide()
+	sound.player_moved(previous_player, player.position, player.is_on_floor(), sprint)
 	if player.position.y < -3.0:
 		reset_lap("地板重力异常。审计匣已复原。")
 		return
 	if boss_live:
+		var previous_boss := boss.position
 		update_boss(delta, sprint)
+		sound.hunter_moved(previous_boss, boss.position, boss_live and boss_phase == phase and boss_delay <= 0.0 and stunned <= 0.0)
 	if upload > 0.0:
 		upload -= delta
 		if upload <= 0.0 and mode == "world" and patched:
 			cleared = true
 			store_progress()
 			set_mode("ending")
+			sound.cue("success")
 
 
 func _input(event: InputEvent) -> void:
@@ -303,6 +313,8 @@ func handle_action(action: String) -> void:
 func set_mode(next: String) -> void:
 	if mode == "audit" and next != "audit":
 		alignment_fields.clear()
+	if next != "world":
+		sound.quiet()
 	mode = next
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if mode == "world" else Input.MOUSE_MODE_VISIBLE
 	interface.queue_redraw()
@@ -402,6 +414,7 @@ func interact() -> void:
 			return
 		if chapter == 0 and not case_accepted and not evidence.has(true):
 			case_accepted = true
+			sound.cue("archive")
 			update_witness()
 			say("接案已签收。目标：晨区 B-17。按 M 查看地图。")
 			return
@@ -415,6 +428,7 @@ func interact() -> void:
 		store_progress()
 		map_phase = phase
 		set_mode("audit")
+		sound.cue("archive")
 	elif tile == station.OFFICE:
 		inspect_office()
 	elif tile == station.RELAY:
@@ -444,6 +458,8 @@ func interact() -> void:
 
 
 func record(index: int, message: String) -> void:
+	if not evidence[index]:
+		sound.cue("collect")
 	evidence[index] = true
 	store_progress()
 	say(message)
@@ -457,12 +473,12 @@ func press_keypad(key: String) -> void:
 		"enter":
 			if keypad_entry == "7138":
 				record(1, "配额账户：交易 X-71 / 交割增加 38 年。")
-				beep(820.0, 0.22)
+				sound.cue("success")
 				set_mode("world")
 			else:
 				keypad_entry = ""
 				say("校验失败。对照 D-09 的交易编号和扣除年数。")
-				beep(155.0, 0.22)
+				sound.cue("fail")
 		_:
 			if keypad_entry.length() < 4:
 				keypad_entry += key
@@ -475,7 +491,7 @@ func inspect_office() -> void:
 				evidence[0] = true
 				update_witness()
 				say("门禁响了一声。林岑的椅子还在转。已取回晨区日志 #043。")
-				beep(640.0, 0.24)
+				sound.cue("collect")
 			else:
 				say("门框有一道撞痕。门禁机的编号是 V-17。")
 		else:
@@ -483,6 +499,7 @@ func inspect_office() -> void:
 				evidence[1] = true
 				evidence[2] = true
 				unbanked = true
+				sound.cue("collect")
 				say("遗书：下次接到任务时，先别按确认。警告，清算外骨骼已启动。")
 				activate_boss(station.RELAY)
 			else:
@@ -496,6 +513,7 @@ func inspect_office() -> void:
 		if not evidence[2]:
 			evidence[2] = true
 			unbanked = true
+			sound.cue("collect")
 			say("林岑还活着：用事故前的求救线路。快，把授权记录送出去。")
 			activate_boss(station.RELAY)
 			store_progress()
@@ -505,14 +523,10 @@ func inspect_office() -> void:
 
 func inspect_relay() -> void:
 	if chapter == 1 and phase == 0:
-		evidence[0] = true
-		say("取回配额单。受益账户属于管理层。授权编号 A-42。")
-		store_progress()
+		record(0, "取回配额单。受益账户属于管理层。授权编号 A-42。")
 	elif chapter == 2:
 		if not solved:
-			evidence[phase] = true
-			say("记录 E-7 开关位置。" if phase == 0 else "找到 E-7 线缆编号和站外中继。")
-			store_progress()
+			record(phase, "记录 E-7 开关位置。" if phase == 0 else "找到 E-7 线缆编号和站外中继。")
 		elif phase == 0 and not armed:
 			armed = true
 			say("旧疏散广播已启动。换相后接上暮区 E-7。")
@@ -586,7 +600,7 @@ func answer(index: int) -> void:
 		return
 	if index != ANSWERS[chapter]:
 		say(["对照门禁设备编号和同一次警报，两边的时钟各走各的。", "把配额单的受益人和操作日志的最后签收者分开看。", "寻找在两份记录中都出现的线路编号。", "先把暮区计时除以 1000，再与晨区记录比较。", "查找同一个交易号，并确认总账是否随站内复位。"][chapter])
-		beep(155.0, 0.24)
+		sound.cue("fail")
 		return
 	complete_puzzle()
 
@@ -606,18 +620,18 @@ func submit_alignment(fields: Array) -> void:
 		return
 	if fields.size() != 2 or not fields.has("device") or not fields.has("alarm"):
 		say("需要两项事件身份；不同步的钟面不是同一次事件的凭证。")
-		beep(155.0, 0.24)
+		sound.cue("fail")
 		return
 	complete_puzzle()
 
 
 func complete_puzzle() -> void:
-	beep(820.0, 0.26)
 	if chapter == 2:
 		solved = true
 		store_progress()
 		set_mode("world")
 		say("线路核验完成：晨区合上开关，暮区接上中继。")
+		sound.cue("success")
 		return
 	var conclusion: String = [
 		"同一间办公室。去时钟实验室查一查，这份任务究竟什么时候被建立。",
@@ -629,6 +643,7 @@ func complete_puzzle() -> void:
 	chapter = NEXT_CHAPTER[chapter]
 	evidence = [false, false, false]
 	reset_lap(conclusion)
+	sound.cue("success")
 
 
 func ready_to_send() -> bool:
@@ -643,7 +658,7 @@ func begin_upload() -> void:
 	path_timer = 0.0
 	set_mode("world")
 	say("上行信号已暴露。撑过六秒，回执会写入审计匣。")
-	beep(740.0, 0.36)
+	sound.cue("archive")
 
 
 func say(message: String) -> void:
@@ -667,7 +682,9 @@ func shift(tile: Vector2i) -> void:
 	last_known = tile
 	shift_cooldown = 1.35
 	path_timer = 0.0
-	beep(385.0 if phase == 0 else 258.0, 0.32)
+	sound.quiet()
+	sound.cues.shift.pitch_scale = 0.95 if phase == 0 else 0.65
+	sound.cue("shift")
 	say("时态同步完成：%s。" % ("晨区" if phase == 0 else "暮区"))
 
 
@@ -688,7 +705,7 @@ func activate_boss(tile: Vector2i) -> void:
 	tracking_time = 3.0
 	patrol_index = 0
 	path_timer = 0.0
-	beep(108.0, 0.70)
+	sound.cue("deploy")
 
 
 func update_boss(delta: float, sprint: bool) -> void:
@@ -722,7 +739,7 @@ func update_boss(delta: float, sprint: bool) -> void:
 			return
 	elif same_phase and seen and distance > 2.5 and distance < 7.8 and charge_recovery <= 0.0 and charge_time <= 0.0:
 		charge_warning = 0.78
-		beep(180.0, 0.42)
+		sound.cue("warning")
 		return
 	charge_time = maxf(0.0, charge_time - delta)
 	var destination := last_known
@@ -734,7 +751,7 @@ func update_boss(delta: float, sprint: bool) -> void:
 			boss_route.clear()
 			charge_warning = 0.0
 			charge_time = 0.0
-			beep(145.0, 0.30)
+			sound.cue("deploy")
 			return
 	elif tactic == "cutoff" and not seen and not sprint and upload <= 0.0:
 		destination = station.GATES[tactic_gate]
@@ -781,11 +798,12 @@ func pulse() -> void:
 		say("脉冲未锁定。需要与追债人在同一时态且无遮挡。")
 		return
 	charges -= 1
+	sound.cues.warning.stop()
 	stunned = 2.25
 	charge_time = 0.0
 	charge_warning = 0.0
 	charge_recovery = 3.0
-	beep(970.0, 0.24)
+	sound.cue("success")
 	say("追债人失相。现在走。")
 
 
@@ -797,6 +815,7 @@ func threat_text() -> String:
 
 
 func reset_lap(message: String) -> void:
+	sound.quiet()
 	alignment_fields.clear()
 	laps += 1
 	if boss_live:
@@ -859,21 +878,3 @@ func apply_tactic(lap: int, strategy: String, gate: int, source: String) -> void
 		tactic = strategy
 		tactic_gate = clampi(gate, 0, 1)
 		tactic_source = source
-
-
-func beep(frequency: float, seconds: float) -> void:
-	var sample_rate := 22050
-	var count := int(seconds * sample_rate)
-	var bytes := PackedByteArray()
-	bytes.resize(count * 2)
-	for index in range(count):
-		var ratio := float(index) / count
-		var envelope := minf(ratio * 28.0, 1.0) * pow(1.0 - ratio, 1.8)
-		var sample := sin(TAU * frequency * index / sample_rate) * envelope
-		bytes.encode_s16(index * 2, int(sample * 12200.0))
-	var tone := AudioStreamWAV.new()
-	tone.format = AudioStreamWAV.FORMAT_16_BITS
-	tone.mix_rate = sample_rate
-	tone.data = bytes
-	audio.stream = tone
-	audio.play()

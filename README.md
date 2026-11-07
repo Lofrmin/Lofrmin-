@@ -29,3 +29,11 @@ WASD 移动，鼠标环视，Shift 奔跑，E 交互，F 眩晕。左上角的�
 - 第 01 章“同一扇门”改为晨暮证据身份对齐：选择门禁 V-17 与警报 #043；钟面时间是误导项。错误或缺证据不会推进章节。
 - G-01/G-02、A-01 等地标在场景和小地图中保持同一编号；实际回程方向由现有网格与 A* 路径计算，不额外改变地图拓扑。
 - 自动化回归：tests/core_loop_test.gd、tests/map_routes_test.gd、tests/visual_check.gd。测试使用内存存档，不读取真实玩家存档或后端。
+
+## P0 音效
+
+已接入本地 Sonniss GDC 素材剪辑：走路/奔跑脚步、追债人空间脚步与冲刺预警、取证/归档/核验成败、晨暮换相提示。提示音使用独立固定音源，不再每次即时生成正弦波。脚步按实际地面位移触发；顶墙、暂停、轮回复位和追债人跨时态时不会残留脚步。空间声音有距离衰减，当前不模拟墙体隔声。
+
+音源、裁切参数与附带许可记录在 assets/audio/sources.json 和 assets/audio/SONNISS-LICENSE.pdf；未向 AI 服务上传这些录音。音乐和配音尚未加入。建议戴耳机体验方向感，并在现场电脑调整系统音量。
+
+音效检查（Godot 4.3）：`--headless --path 项目目录 --script res://tests/audio_test.gd`；左右声道与距离衰减检查：`--path 项目目录 --rendering-method gl_compatibility --script res://tests/audio_spatial_check.gd`，后者需要真实音频驱动。
