@@ -21,6 +21,7 @@ const MEDICAL := Vector2i(4, 5)
 const LEDGER := Vector2i(8, 5)
 const GATES := [Vector2i(1, 3), Vector2i(13, 3)]
 const RETURN_MARKERS := [Vector2i(13,1), Vector2i(12,3), Vector2i(2,3), Vector2i(4,3), Vector2i(8,3), Vector2i(4,5), Vector2i(8,5), Vector2i(1,9), Vector2i(13,9)]
+const AUDIT_MONITOR_SCENE := preload("res://assets/props/a01/SM_A01_Monitor.glb")
 
 var maps: Array[Node3D] = []
 var grids: Array[AStarGrid2D] = []
@@ -32,6 +33,7 @@ var instruments: Array[Node3D] = []
 var observation_glass: ShaderMaterial
 var audit_labels: Array[Label3D] = []
 var return_signs: Array[Label3D] = []
+var use_audit_monitor_prop := true
 
 
 func build() -> void:
@@ -244,7 +246,7 @@ func fixture(layer: Node3D, tile: Vector2i, phase: int, accent: Material) -> voi
 	var desk := center + Vector3(0, 0, -1.21)
 	box(layer, desk + Vector3.UP * 0.45, Vector3(1.68, 0.90, 0.54), palette.frame, true)
 	box(layer, desk + Vector3.UP * 0.95, Vector3(1.85, 0.14, 0.68), palette.wall)
-	box(layer, desk + Vector3.UP * 1.23, Vector3(1.22, 0.45, 0.12), palette.ink)
+	var monitor_shell := box(layer, desk + Vector3.UP * 1.23, Vector3(1.22, 0.45, 0.12), palette.ink)
 	var monitor := QuadMesh.new()
 	monitor.size = Vector2(1.10, 0.34)
 	var screen := MeshInstance3D.new()
@@ -253,7 +255,7 @@ func fixture(layer: Node3D, tile: Vector2i, phase: int, accent: Material) -> voi
 	layer.add_child(screen)
 	screen.position = desk + Vector3(0, 1.23, 0.068)
 	if tile == AUDIT:
-		build_audit_details(layer, desk, screen)
+		build_audit_details(layer, desk, screen, monitor_shell)
 	var plate := sign_at(layer, desk + Vector3(0, 1.86, 0.12), heading, accent.albedo_color)
 	plate.billboard = BaseMaterial3D.BILLBOARD_DISABLED
 	plate.pixel_size = 0.00165
@@ -295,14 +297,23 @@ func fixture(layer: Node3D, tile: Vector2i, phase: int, accent: Material) -> voi
 				box(layer, rack + Vector3(0.11, height, 0.301), Vector3(0.07, 0.036, 0.024), accent)
 
 
-func build_audit_details(layer: Node3D, desk: Vector3, screen: MeshInstance3D) -> void:
+func build_audit_details(layer: Node3D, desk: Vector3, screen: MeshInstance3D, monitor_shell: MeshInstance3D) -> void:
 	# Decoration stays inside the existing desk footprint or its tabletop wings.
+	if use_audit_monitor_prop:
+		monitor_shell.visible = false
+		screen.visible = false
+		var monitor: Node3D = AUDIT_MONITOR_SCENE.instantiate()
+		monitor.name = "A01_Monitor"
+		layer.add_child(monitor)
+		monitor.position = desk + Vector3(0, 1.02, -0.13)
+		monitor.rotation.y = PI
 	box(layer, desk + Vector3(0, 0.95, 0), Vector3(2.65, 0.12, 0.78), palette.wall)
-	box(layer, desk + Vector3(0, 1.04, -0.04), Vector3(0.13, 0.19, 0.10), palette.frame)
-	box(layer, desk + Vector3(0, 1.015, 0.23), Vector3(0.65, 0.035, 0.20), palette.frame)
+	if not use_audit_monitor_prop:
+		box(layer, desk + Vector3(0, 1.04, -0.04), Vector3(0.13, 0.19, 0.10), palette.frame)
+	box(layer, desk + Vector3(0, 1.015, 0.30), Vector3(0.65, 0.035, 0.18), palette.frame)
 	for row in range(3):
 		for col in range(10):
-			box(layer, desk + Vector3(-0.27 + col * 0.06, 1.038, 0.17 + row * 0.055), Vector3(0.045, 0.009, 0.035), palette.wall)
+			box(layer, desk + Vector3(-0.27 + col * 0.06, 1.038, 0.245 + row * 0.05), Vector3(0.045, 0.009, 0.035), palette.wall)
 	box(layer, desk + Vector3(0.48, 1.035, 0.23), Vector3(0.13, 0.05, 0.20), palette.frame)
 	for side in [-1, 1]:
 		box(layer, desk + Vector3(side * 0.94, 1.025, 0.03), Vector3(0.53, 0.025, 0.62), palette.frame)
@@ -317,7 +328,11 @@ func build_audit_details(layer: Node3D, desk: Vector3, screen: MeshInstance3D) -
 		paper.outline_size = 0
 		paper.no_depth_test = false
 	screen.material_override = palette.ink
-	var status: Label3D = sign_at(layer, desk + Vector3(0, 1.23, 0.077), "", Color("a7dcd0"))
+	var status_position := desk + Vector3(0, 1.23, 0.077)
+	if use_audit_monitor_prop:
+		status_position = desk + Vector3(0, 0.72, 0.405)
+		box(layer, status_position - Vector3(0, 0, 0.02), Vector3(1.40, 0.30, 0.035), palette.ink)
+	var status: Label3D = sign_at(layer, status_position, "", Color("a7dcd0"))
 	status.name = "AuditStatus"
 	status.billboard = BaseMaterial3D.BILLBOARD_DISABLED
 	status.font_size = 30

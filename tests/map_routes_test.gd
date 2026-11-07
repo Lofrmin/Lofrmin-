@@ -27,6 +27,15 @@ func run() -> void:
 	var station: Node3D = load("res://station.gd").new()
 	root.add_child(station)
 	station.build()
+	for layer in station.maps:
+		var monitor: Node3D = layer.get_node_or_null("A01_Monitor")
+		check(monitor != null, "both phases include imported monitor")
+		if monitor == null: continue
+		for mesh in monitor.find_children("*", "MeshInstance3D", true, false):
+			var bounds: AABB = mesh.global_transform * mesh.get_aabb()
+			check(absf(bounds.position.y - 1.02) < 0.005, "monitor base rests on tabletop")
+		var status: Label3D = layer.get_node("AuditStatus")
+		check(status.position.y < 0.90, "audit status remains visible on desk front")
 	for phase in range(2):
 		for target in [station.OFFICE,station.LAB,station.RELAY,station.MEDICAL,station.LEDGER,station.GATES[0],station.GATES[1]]:
 			verify_route(station, phase, station.AUDIT, target)

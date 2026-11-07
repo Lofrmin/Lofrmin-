@@ -11,6 +11,7 @@ class MemoryProfile extends Node:
 
 func _ready() -> void:
 	station = Station.new()
+	station.use_audit_monitor_prop = false
 	add_child(station)
 	station.build()
 	build_player()
