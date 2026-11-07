@@ -118,6 +118,10 @@ const BREAKS_DUSK := [
 ]
 const RETURN_MARKERS := [Vector2i(38, 20), Vector2i(33, 33), Vector2i(18, 38), Vector2i(7, 33), Vector2i(2, 20), Vector2i(7, 7), Vector2i(18, 2), Vector2i(33, 7), Vector2i(32, 25), Vector2i(15, 32), Vector2i(8, 15), Vector2i(25, 8), Vector2i(25, 25), Vector2i(15, 25), Vector2i(15, 15), Vector2i(25, 15)]
 const AUDIT_MONITOR_SCENE := preload("res://assets/props/a01/SM_A01_Monitor.glb")
+const AUDIT_KEYBOARD := preload("res://assets/props/a01/SM_A01_Keyboard.glb")
+const AUDIT_FILE := preload("res://assets/props/a01/SM_A01_File.glb")
+const AUDIT_STAMP := preload("res://assets/props/a01/SM_A01_Stamp.glb")
+const OFFICIAL_MASCOTS := preload("res://assets/props/panda_jam/official_mascots_front.png")
 
 var maps: Array[Node3D] = []
 var grids: Array[AStarGrid2D] = []
@@ -454,10 +458,23 @@ func build_audit_details(layer: Node3D, desk: Vector3, screen: MeshInstance3D, m
 	box(layer, desk + Vector3(0, 0.95, 0), Vector3(2.65, 0.12, 0.78), palette.wall)
 	if not use_audit_monitor_prop:
 		box(layer, desk + Vector3(0, 1.04, -0.04), Vector3(0.13, 0.19, 0.10), palette.frame)
-	box(layer, desk + Vector3(0, 1.015, 0.30), Vector3(0.65, 0.035, 0.18), palette.frame)
-	for row in range(3):
-		for col in range(10):
-			box(layer, desk + Vector3(-0.27 + col * 0.06, 1.038, 0.245 + row * 0.05), Vector3(0.045, 0.009, 0.035), palette.wall)
+	if use_audit_monitor_prop:
+		for item in [
+			[AUDIT_KEYBOARD, "A01_Keyboard", Vector3(0, 1.02, 0.27), Vector3(0.57, 0.24, 0.40), 0.0],
+			[AUDIT_FILE, "A01_File", Vector3(-1.01, 1.02, -0.29), Vector3.ONE * 0.27, -0.16],
+			[AUDIT_STAMP, "A01_Stamp", Vector3(0.80, 1.02, -0.26), Vector3.ONE * 0.22, 0.23],
+		]:
+			var prop: Node3D = item[0].instantiate()
+			prop.name = item[1]
+			prop.position = desk + item[2]
+			prop.scale = item[3]
+			prop.rotation.y = item[4]
+			layer.add_child(prop)
+	else:
+		box(layer, desk + Vector3(0, 1.015, 0.30), Vector3(0.65, 0.035, 0.18), palette.frame)
+		for row in range(3):
+			for col in range(10):
+				box(layer, desk + Vector3(-0.27 + col * 0.06, 1.038, 0.245 + row * 0.05), Vector3(0.045, 0.009, 0.035), palette.wall)
 	box(layer, desk + Vector3(0.48, 1.035, 0.23), Vector3(0.13, 0.05, 0.20), palette.frame)
 	for side in [-1, 1]:
 		box(layer, desk + Vector3(side * 0.94, 1.025, 0.03), Vector3(0.53, 0.025, 0.62), palette.frame)
@@ -483,6 +500,22 @@ func build_audit_details(layer: Node3D, desk: Vector3, screen: MeshInstance3D, m
 	status.pixel_size = 0.0016
 	status.outline_size = 0
 	audit_labels.append(status)
+	var placard := desk + Vector3(0, 2.36, 0.07)
+	box(layer, placard + Vector3(0, 0, -0.03), Vector3(1.16, 0.79, 0.05), palette.frame)
+	box(layer, placard + Vector3(0, 0.42, -0.03), Vector3(0.08, 0.32, 0.08), palette.frame)
+	var mascots := Sprite3D.new()
+	mascots.name = "A01_PandaJamMascots"
+	mascots.texture = OFFICIAL_MASCOTS
+	mascots.region_enabled = true
+	# The original sheet includes Padding on the right; only Xiaomiao and Duoji are featured.
+	mascots.region_rect = Rect2(64, 213, 932, 587)
+	mascots.pixel_size = 0.00115
+	layer.add_child(mascots)
+	mascots.position = placard + Vector3.UP * 0.027
+	var caption := sign_at(layer, placard + Vector3(0, -0.348, 0.005), "PANDA JAM / 多吉与小咪", Color("e0eee7"))
+	caption.billboard = BaseMaterial3D.BILLBOARD_DISABLED
+	caption.pixel_size = 0.00091
+	caption.outline_size = 0
 
 
 func update_audit_status(text: String) -> void:
