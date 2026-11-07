@@ -364,6 +364,9 @@ func draw_evidence(accent: Color) -> void:
 		if game.chapter == 0:
 			draw_alignment(accent)
 			return
+		if game.chapter == 3:
+			draw_timeline(accent)
+			return
 		write(Vector2(407, 386), game.puzzle_question(), 22, WHITE)
 		var choices: Array = game.puzzle_choices()
 		for index in range(choices.size()):
@@ -392,6 +395,28 @@ func draw_alignment(accent: Color) -> void:
 		if selected:
 			draw_line(Vector2(710, y + 19), Vector2(848, y + 19), accent, 2.0, true)
 	button(Rect2(406, 533, 739, 33), "align_submit", "Enter  核验关联    /    点击或按 1、2、3 选择与取消", accent)
+
+
+func draw_timeline(accent: Color) -> void:
+	write(Vector2(406,376),"共同起点是脉冲 0 秒。先换算，再依先后点选。",17,WHITE)
+	write(Vector2(406,407),"暮区5000秒÷1000→晨区?秒｜↑扣款 ↓立案",15,DIM)
+	draw_rect(Rect2(406,420,105,38),alpha(accent,0.09))
+	draw_rect(Rect2(406,420,105,38),alpha(accent,0.58),false,1.0)
+	code(Vector2(421,447),game.timeline_seconds if not game.timeline_seconds.is_empty() else "___",20,accent)
+	for digit in range(1,10):
+		var x := 535 + ((digit - 1) % 3) * 48
+		var y := 422 + ((digit - 1) / 3) * 35
+		button(Rect2(x,y,42,29),"timeline_digit_%d" % digit,str(digit),accent)
+	button(Rect2(583,527,42,29),"timeline_digit_0","0",accent)
+	button(Rect2(631,527,90,29),"timeline_back","退格",DIM)
+	for id in ["debit","filing"]:
+		var rank: int = game.timeline_order.find(id)
+		var y := 426.0 if id == "debit" else 480.0
+		var text := "暮区扣款名单5000s" if id == "debit" else "晨区寻人立案6s"
+		var label := "%d｜%s" % [rank + 1,text] if rank >= 0 else "点选排序｜%s" % text
+		button(Rect2(778,y,365,43),"timeline_pick_"+id,label,accent if rank >= 0 else DIM)
+	button(Rect2(778,532,227,33),"timeline_submit","Enter  核验换算与顺序",accent)
+	button(Rect2(1014,532,129,33),"timeline_clear","清空本题",DIM)
 
 
 func draw_keypad(accent: Color) -> void:
@@ -477,6 +502,13 @@ func draw_big_map() -> void:
 		write(Vector2(origin.x + 120, origin.y - 26), "（另一时态，你的位置是同坐标）", 12, DIM)
 	write(Vector2(origin.x + side - 210, origin.y - 26), "M 关闭 · Tab 切晨暮", 13, tint)
 	write(Vector2(origin.x - 14, origin.y + side + 34), "A 调查台  B 办公室  C 时钟实验室  D 生命维持  L 结算  R 中继  G 换相门  红＝已封闭断点", 12, DIM)
+	draw_rect(Rect2(25,130,300,112),Color(0.025,0.039,0.047,0.94))
+	draw_rect(Rect2(25,130,2,112),Color("ff9a91") if game.boss_live else tint)
+	write(Vector2(39,153),"实时地图：世界未暂停",14,WHITE)
+	write(Vector2(39,177),"当前位置：" + ("暮区" if game.phase == 1 else "晨区"),13,tint)
+	if game.boss_live:
+		write(Vector2(39,199),game.threat_text(),13,Color("ff9a91"))
+	write(Vector2(39,226),"M / Esc 收起，再按 Esc 暂停",12,DIM)
 
 
 func draw_dev_panel() -> void:
@@ -484,6 +516,8 @@ func draw_dev_panel() -> void:
 	var answer := "—"
 	if game.chapter == 0:
 		answer = "选 1 设备 + 2 警报，Enter"
+	elif game.chapter == 3:
+		answer = "5秒；扣款→立案"
 	elif not game.solved:
 		answer = "选 %d" % (game.ANSWERS[game.chapter] + 1)
 	elif game.chapter == 2:

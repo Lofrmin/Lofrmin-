@@ -48,6 +48,10 @@ func run() -> void:
 	game.set_mode("paused")
 	check(not visual.animation.active, "Pause freezes animation")
 	game.boss_live = true
+	game.phase = 1
+	game.map_phase = 1
+	game.station.set_phase(1)
+	game.boss_phase = 1
 	game.boss_delay = 0.0
 	game.stunned = 0.0
 	game.charge_recovery = 5.0

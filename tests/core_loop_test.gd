@@ -69,10 +69,24 @@ func run() -> void:
 	game._input(key)
 	check(game.chapter == 3 and game.evidence == [false,false,false], "correct identity advances to clock chapter")
 	check(game.alignment_fields.is_empty(), "alignment transient state cleared")
+	game.chapter = 3
 	game.evidence = [true,true,true]
 	game.set_mode("audit")
 	game.answer(0)
-	check(game.chapter == 1, "existing chronology puzzle unchanged")
+	game.handle_action("choice_0")
+	check(game.chapter == 3, "timeline cannot be bypassed by old multiple-choice actions")
+	game.timeline_key("5")
+	game.pick_timeline("filing")
+	game.pick_timeline("debit")
+	game.submit_timeline()
+	check(game.chapter == 3, "right conversion with wrong chronology is rejected")
+	game.timeline_seconds = ""
+	game.timeline_order.clear()
+	game.timeline_key("5")
+	game.pick_timeline("debit")
+	game.pick_timeline("filing")
+	game.submit_timeline()
+	check(game.chapter == 1, "correct event order advances to authorization case")
 	game.evidence = [true,true,true]
 	game.set_mode("audit")
 	game.answer(2)

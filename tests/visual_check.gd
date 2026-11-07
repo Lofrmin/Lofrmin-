@@ -76,6 +76,20 @@ func run() -> void:
 		if game.chapter != 3:
 			failed = true
 			printerr("FAIL: mouse alignment progression")
+		game.chapter = 3
+		game.evidence = [true,true,true]
+		game.timeline_seconds = ""
+		game.timeline_order.clear()
+		game.set_mode("audit")
+		await capture("timeline-empty-%d" % resolution.x)
+		await click("timeline_digit_5")
+		await click("timeline_pick_debit")
+		await click("timeline_pick_filing")
+		await capture("timeline-selected-%d" % resolution.x)
+		await click("timeline_submit")
+		if game.chapter != 1:
+			failed = true
+			printerr("FAIL: mouse time ordering progression")
 	root.size = Vector2i(1280,720)
 	game.mode = "world"
 	game.phase = 1

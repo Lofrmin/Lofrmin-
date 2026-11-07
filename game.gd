@@ -58,6 +58,10 @@ var case_accepted := false
 var cleared := false
 var evidence: Array = [false, false, false]
 var alignment_fields: Array[String] = []
+var timeline_seconds := ""
+var timeline_order: Array[String] = []
+var dusk_grace := 0.0
+var dusk_grace_used := false
 var unbanked := false
 var solved := false
 var armed := false
@@ -67,6 +71,7 @@ var keypad_entry := ""
 var shift_cooldown := 0.0
 var time_in_lap := 0.0
 var boss_live := false
+var boss_chasing := false
 var boss_phase := 0
 var boss_delay := 0.0
 var stunned := 0.0
@@ -242,6 +247,7 @@ func _physics_process(delta: float) -> void:
 		update_boss(delta, sprint)
 		boss_rig.update_motion(delta, boss.position.distance_to(previous_boss) / delta, stunned > 0.0 or boss_delay > 0.0 or charge_warning > 0.0)
 		sound.hunter_moved(previous_boss, boss.position, boss_live and boss_phase == phase and boss_delay <= 0.0 and stunned <= 0.0)
+	sound.update_chase(delta, threat, boss_live and boss_chasing and boss_phase == phase and boss_delay <= 0.0 and stunned <= 0.0)
 	if upload > 0.0:
 		upload -= delta
 		if upload <= 0.0 and mode == "world" and patched:
@@ -259,6 +265,9 @@ func _input(event: InputEvent) -> void:
 		handle_action(interface.button_at(event.position))
 	elif event is InputEventKey and event.pressed and not event.echo:
 		if event.physical_keycode == KEY_ESCAPE:
+			if mode == "world" and big_map:
+				big_map = false
+				return
 			if mode == "controls":
 				set_mode(controls_return)
 			elif mode == "restart_confirm":
@@ -298,21 +307,34 @@ func _input(event: InputEvent) -> void:
 				if event.physical_keycode == KEY_ENTER:
 					handle_action("loop" if mode == "ending" else "resume")
 			"audit":
-				if event.physical_keycode in [KEY_1, KEY_2, KEY_3] and mode == "audit" and puzzle_available():
-					if chapter == 0:
-						toggle_alignment(["device", "alarm", "clock"][event.physical_keycode - KEY_1])
-					else:
-						answer(event.physical_keycode - KEY_1)
-				elif event.physical_keycode == KEY_ENTER and chapter == 0:
-					submit_alignment(alignment_fields)
-				elif event.physical_keycode == KEY_ENTER and ready_to_send():
-					begin_upload()
+				if chapter == 3:
+					if event.physical_keycode >= KEY_0 and event.physical_keycode <= KEY_9:
+						timeline_key(str(event.physical_keycode - KEY_0))
+					elif event.physical_keycode == KEY_BACKSPACE:
+						timeline_key("back")
+					elif event.physical_keycode == KEY_ENTER:
+						submit_timeline()
+					elif event.physical_keycode == KEY_UP:
+						pick_timeline("debit")
+					elif event.physical_keycode == KEY_DOWN:
+						pick_timeline("filing")
+				else:
+					if event.physical_keycode in [KEY_1, KEY_2, KEY_3] and mode == "audit" and puzzle_available():
+						if chapter == 0:
+							toggle_alignment(["device", "alarm", "clock"][event.physical_keycode - KEY_1])
+						else:
+							answer(event.physical_keycode - KEY_1)
+					elif event.physical_keycode == KEY_ENTER and chapter == 0:
+						submit_alignment(alignment_fields)
+					elif event.physical_keycode == KEY_ENTER and ready_to_send():
+						begin_upload()
 			"world":
 				match event.physical_keycode:
 					KEY_E: interact()
 					KEY_F: pulse()
 					KEY_M:
 						big_map = not big_map
+						say("大地图为实时预览，追债人仍会移动；M 关闭，Tab 预览另一时态。" if big_map else "大地图已关闭。")
 					KEY_TAB:
 						map_phase = 1 - map_phase
 					KEY_F1:
@@ -351,6 +373,12 @@ func handle_action(action: String) -> void:
 		"resume": set_mode("world")
 		"send": begin_upload()
 		"align_submit": submit_alignment(alignment_fields)
+		"timeline_submit": submit_timeline()
+		"timeline_back": timeline_key("back")
+		"timeline_clear":
+			if mode == "audit" and chapter == 3:
+				timeline_seconds = ""
+				timeline_order.clear()
 		"accept":
 			if can_confirm_again():
 				case_accepted = true
@@ -377,7 +405,11 @@ func handle_action(action: String) -> void:
 				if restart_return == "menu": begin_intro()
 		"quit": get_tree().quit()
 		_:
-			if action.begins_with("align_"):
+			if action.begins_with("timeline_digit_"):
+				timeline_key(action.trim_prefix("timeline_digit_"))
+			elif action.begins_with("timeline_pick_"):
+				pick_timeline(action.trim_prefix("timeline_pick_"))
+			elif action.begins_with("align_"):
 				toggle_alignment(action.trim_prefix("align_"))
 			elif action.begins_with("choice_"):
 				answer(int(action.get_slice("_", 1)))
@@ -389,8 +421,11 @@ func set_mode(next: String) -> void:
 	boss_rig.animation.active = next == "world" and boss_live and boss.visible
 	if mode == "audit" and next != "audit":
 		alignment_fields.clear()
+		timeline_seconds = ""
+		timeline_order.clear()
 	if next != "world":
 		sound.quiet()
+	if next != "world": big_map = false
 	mode = next
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if mode == "world" else Input.MOUSE_MODE_VISIBLE
 	interface.queue_redraw()
@@ -650,6 +685,8 @@ func guidance() -> String:
 		return "Tab 只是地图预览；到 G 门按 E 才能换区。"
 	if unbanked:
 		return "现场记录尚未归档，先回晨区 A-01。"
+	if boss_live and phase == 0 and upload <= 0.0:
+		return "晨区暂时安全，可回 A-01 整理证据。"
 	if boss_live:
 		return "Shift 奔跑 · F 断相：需同区、无遮挡。"
 	if chapter == 1 and case_accepted:
@@ -687,7 +724,7 @@ func can_confirm_again() -> bool:
 
 
 func answer(index: int) -> void:
-	if mode != "audit" or not puzzle_available() or chapter == 0:
+	if mode != "audit" or not puzzle_available() or chapter in [0, 3]:
 		return
 	if index != ANSWERS[chapter]:
 		say(["对照门禁设备编号和同一次警报，两边的时钟各走各的。", "把配额单的受益人和操作日志的最后签收者分开看。", "寻找在两份记录中都出现的线路编号。", "先把暮区计时除以 1000，再与晨区记录比较。", "查找同一个交易号，并确认总账是否随站内复位。"][chapter])
@@ -711,6 +748,33 @@ func submit_alignment(fields: Array) -> void:
 		return
 	if fields.size() != 2 or not fields.has("device") or not fields.has("alarm"):
 		say("需要两项事件身份；不同步的钟面不是同一次事件的凭证。")
+		sound.cue("fail")
+		return
+	complete_puzzle()
+
+
+func timeline_key(key: String) -> void:
+	if mode != "audit" or chapter != 3 or not puzzle_available(): return
+	if key == "back":
+		timeline_seconds = timeline_seconds.left(-1)
+	elif key.length() == 1 and key in "0123456789" and timeline_seconds.length() < 4:
+		timeline_seconds += key
+	interface.queue_redraw()
+
+
+func pick_timeline(event: String) -> void:
+	if mode != "audit" or chapter != 3 or not puzzle_available() or event not in ["filing", "debit"]: return
+	if event in timeline_order:
+		timeline_order.erase(event)
+	else:
+		timeline_order.append(event)
+	interface.queue_redraw()
+
+
+func submit_timeline() -> void:
+	if mode != "audit" or chapter != 3 or not puzzle_available(): return
+	if not timeline_seconds.is_valid_int() or timeline_seconds.to_int() != 5 or timeline_order != ["debit", "filing"]:
+		say("先用 1:1000 换成晨区秒数，再按先发生、后发生点选两张记录。")
 		sound.cue("fail")
 		return
 	complete_puzzle()
@@ -744,6 +808,28 @@ func ready_to_send() -> bool:
 func begin_upload() -> void:
 	if mode != "audit" or not ready_to_send():
 		return
+	var approach: Array[Vector2i] = []
+	var target: Vector2i = station.cell(player.position)
+	for gate in station.GATES:
+		var route: Array[Vector2i] = station.path(0, gate, target)
+		if route.size() >= 5 and (approach.is_empty() or route.size() < approach.size()):
+			approach = route
+	if approach.is_empty():
+		say("上行通道暂不可用，请重新靠近调查台。")
+		return
+	boss_live = true
+	boss_phase = 0
+	var entry := approach.size() - 5
+	while entry > 0 and station.point(approach[entry]).distance_to(player.position) < 12.0:
+		entry -= 1
+	boss.position = station.point(approach[entry])
+	boss_delay = 0.6
+	stunned = 0.0
+	charge_warning = 0.0
+	charge_time = 0.0
+	charge_recovery = 0.8
+	boss_route.clear()
+	tracking_time = 6.0
 	upload = 6.0
 	last_known = station.AUDIT
 	path_timer = 0.0
@@ -758,6 +844,9 @@ func say(message: String) -> void:
 
 
 func shift(tile: Vector2i) -> void:
+	if upload > 0.0:
+		say("上行连接尚未完成，留在晨区躲避追债人。")
+		return
 	if shift_cooldown > 0.0:
 		say("换相门正在同步，请稍候。")
 		return
@@ -770,36 +859,53 @@ func shift(tile: Vector2i) -> void:
 	player.position = station.point(tile) + Vector3.UP * 0.055
 	player.velocity = Vector3.ZERO
 	cross_gate = tile
-	last_known = tile
 	shift_cooldown = 1.35
 	path_timer = 0.0
 	sound.quiet()
 	sound.cues.shift.pitch_scale = 0.95 if phase == 0 else 0.65
 	sound.cue("shift")
-	say("时态同步完成：%s。" % ("晨区" if phase == 0 else "暮区"))
+	if phase == 1:
+		if not boss_live: activate_boss(dusk_spawn_tile())
+		if not dusk_grace_used:
+			dusk_grace = 2.0
+			dusk_grace_used = true
+	else:
+		boss.hide()
+		threat = 0.0
+	say("晨区暂时安全。回 A-01 归档、核验记录。" if phase == 0 else "暮区有清算单位巡逻。听脚步、绕开视线，别在门口久留。")
+
+
+func dusk_spawn_tile() -> Vector2i:
+	var origin: Vector2i = station.cell(player.position)
+	for target in [station.LAB, station.LEDGER, station.RELAY, station.OFFICE]:
+		var route: Array[Vector2i] = station.path(1, origin, target)
+		if route.size() >= 9:
+			return route[mini(10, route.size() - 1)]
+	return station.RELAY
 
 
 func activate_boss(tile: Vector2i) -> void:
-	if boss_live:
-		return
+	if boss_live or phase != 1: return
 	boss_live = true
-	boss_phase = phase
+	boss_phase = 1
 	boss_delay = 2.2
-	var spawn := tile
-	if tactic == "ambush" and chapter != 2:
-		var gate: Vector2i = station.GATES[tactic_gate]
-		var route: Array = station.path(phase, station.cell(player.position), gate)
-		if route.size() >= 4:
-			spawn = gate
-	boss.position = station.point(spawn)
-	last_known = station.cell(player.position)
-	tracking_time = 3.0
+	boss.position = station.point(tile)
+	last_known = tile
+	tracking_time = 0.0
 	patrol_index = 0
 	path_timer = 0.0
+	boss_route.clear()
 	sound.cue("deploy")
 
 
 func update_boss(delta: float, sprint: bool) -> void:
+	boss_chasing = false
+	if phase == 0 and upload <= 0.0:
+		boss.hide()
+		threat = 0.0
+		return
+	var protected := dusk_grace > 0.0 and phase == 1
+	dusk_grace = maxf(0.0, dusk_grace - delta)
 	boss_delay = maxf(0.0, boss_delay - delta)
 	stunned = maxf(0.0, stunned - delta)
 	charge_recovery = maxf(0.0, charge_recovery - delta)
@@ -818,7 +924,8 @@ func update_boss(delta: float, sprint: bool) -> void:
 		tracking_time = 3.0
 		if sprint and not seen:
 			sprint_observed = 1
-	if same_phase and distance < 1.10 and not dev_god:
+	boss_chasing = same_phase and (seen or tracking_time > 0.0 or upload > 0.0)
+	if same_phase and distance < 1.10 and not protected and not dev_god:
 		reset_lap("追债人完成结算。审计匣里的记录随你回到了开场。")
 		return
 	if charge_warning > 0.0:
@@ -828,7 +935,7 @@ func update_boss(delta: float, sprint: bool) -> void:
 			charge_recovery = 5.5
 		else:
 			return
-	elif same_phase and seen and distance > 2.5 and distance < 7.8 and charge_recovery <= 0.0 and charge_time <= 0.0:
+	elif same_phase and seen and not protected and distance > 2.5 and distance < 7.8 and charge_recovery <= 0.0 and charge_time <= 0.0:
 		charge_warning = 0.78
 		sound.cue("warning")
 		return
@@ -849,7 +956,7 @@ func update_boss(delta: float, sprint: bool) -> void:
 	elif tactic == "guard" and not seen and not sprint and upload <= 0.0:
 		destination = station.GUARD
 	elif not seen and tracking_time <= 0.0 and upload <= 0.0:
-		var sweep := [station.RELAY, station.GATES[1], station.OFFICE, station.GATES[0]]
+		var sweep: Array = [station.LAB, station.OFFICE, station.LEDGER, station.RELAY] + station.GATES
 		if boss.position.distance_to(station.point(sweep[patrol_index])) < 0.25:
 			patrol_index = (patrol_index + 1) % sweep.size()
 		destination = sweep[patrol_index]
@@ -871,7 +978,7 @@ func update_boss(delta: float, sprint: bool) -> void:
 			boss_route.pop_front()
 		return
 	boss.look_at(target, Vector3.UP)
-	var speed := 7.2 if charge_time > 0.0 else (3.77 if seen else 3.27)
+	var speed := 7.2 if charge_time > 0.0 else (4.45 if upload > 0.0 else (3.77 if seen else 3.27))
 	boss.position = boss.position.move_toward(target, speed * delta)
 
 
@@ -908,6 +1015,11 @@ func threat_text() -> String:
 func reset_lap(message: String) -> void:
 	sound.quiet()
 	alignment_fields.clear()
+	timeline_seconds = ""
+	timeline_order.clear()
+	dusk_grace = 0.0
+	dusk_grace_used = false
+	big_map = false
 	laps += 1
 	if boss_live:
 		profile.choose_tactic(laps, gate_observed, sprint_observed)
@@ -922,6 +1034,7 @@ func reset_lap(message: String) -> void:
 	charges = 2
 	threat = 0.0
 	boss_live = false
+	boss_chasing = false
 	boss.hide()
 	boss_route.clear()
 	stunned = 0.0

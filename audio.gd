@@ -1,5 +1,7 @@
 extends Node
 
+const CHASE_SILENT_DB := -48.0
+const CHASE_LOOP_SOURCE: AudioStreamWAV = preload("res://assets/audio/chase_loop.wav")
 const CLIPS := {
 	"step_a": preload("res://assets/audio/step_a.wav"),
 	"step_b": preload("res://assets/audio/step_b.wav"),
@@ -14,6 +16,8 @@ const CLIPS := {
 }
 
 var cues: Dictionary = {}
+var chase: AudioStreamPlayer
+var chase_loop: AudioStreamWAV
 var player_step: AudioStreamPlayer
 var hunter_step: AudioStreamPlayer3D
 var player_distance := 0.0
@@ -21,6 +25,14 @@ var hunter_distance := 0.0
 var alternate := false
 
 func setup(hunter: Node3D) -> void:
+	chase_loop = CHASE_LOOP_SOURCE.duplicate() as AudioStreamWAV
+	chase_loop.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	chase_loop.loop_end = chase_loop.data.size() / 2
+	chase = AudioStreamPlayer.new()
+	chase.stream = chase_loop
+	chase.volume_db = CHASE_SILENT_DB
+	chase.max_polyphony = 1
+	add_child(chase)
 	for key in ["collect", "archive", "success", "fail", "shift"]:
 		var voice := AudioStreamPlayer.new()
 		voice.stream = CLIPS[key]
@@ -47,6 +59,19 @@ func setup(hunter: Node3D) -> void:
 
 func cue(key: String) -> void:
 	cues[key].play()
+
+func update_chase(delta: float, threat: float, active: bool) -> void:
+	if active:
+		if not chase.playing:
+			chase.volume_db = CHASE_SILENT_DB
+			chase.play()
+		var target_db := lerpf(-22.0, -16.0, clampf(threat, 0.0, 1.0))
+		chase.volume_db = move_toward(chase.volume_db, target_db, maxf(0.0, delta) * 12.0)
+	elif chase.playing:
+		chase.volume_db = move_toward(chase.volume_db, CHASE_SILENT_DB, maxf(0.0, delta) * 12.0)
+		if chase.volume_db <= CHASE_SILENT_DB + 0.001:
+			chase.stop()
+			chase.volume_db = CHASE_SILENT_DB
 
 func player_moved(before: Vector3, after: Vector3, grounded: bool, sprint: bool) -> void:
 	var distance := Vector2(after.x - before.x, after.z - before.z).length()
@@ -79,5 +104,7 @@ func quiet() -> void:
 	player_distance = 0.0
 	hunter_distance = 0.0
 	player_step.stop()
+	chase.stop()
+	chase.volume_db = CHASE_SILENT_DB
 	for voice in cues.values():
 		voice.stop()
