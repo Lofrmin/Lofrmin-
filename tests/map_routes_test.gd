@@ -31,6 +31,7 @@ func run() -> void:
 		var monitor: Node3D = layer.get_node_or_null("A01_Monitor")
 		check(monitor != null, "both phases include imported monitor")
 		if monitor == null: continue
+		check(is_zero_approx(monitor.rotation.y), "monitor front faces the player aisle")
 		for mesh in monitor.find_children("*", "MeshInstance3D", true, false):
 			var bounds: AABB = mesh.global_transform * mesh.get_aabb()
 			check(absf(bounds.position.y - 1.02) < 0.005, "monitor base rests on tabletop")

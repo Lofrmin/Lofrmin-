@@ -305,8 +305,7 @@ func build_audit_details(layer: Node3D, desk: Vector3, screen: MeshInstance3D, m
 		var monitor: Node3D = AUDIT_MONITOR_SCENE.instantiate()
 		monitor.name = "A01_Monitor"
 		layer.add_child(monitor)
-		monitor.position = desk + Vector3(0, 1.02, -0.13)
-		monitor.rotation.y = PI
+		monitor.position = desk + Vector3(0, 1.02, -0.04)
 	box(layer, desk + Vector3(0, 0.95, 0), Vector3(2.65, 0.12, 0.78), palette.wall)
 	if not use_audit_monitor_prop:
 		box(layer, desk + Vector3(0, 1.04, -0.04), Vector3(0.13, 0.19, 0.10), palette.frame)
