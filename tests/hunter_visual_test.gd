@@ -47,6 +47,10 @@ func run() -> void:
 	check(game.boss.position == before, "Animation never moves logical boss")
 	game.set_mode("paused")
 	check(not visual.animation.active, "Pause freezes animation")
+	game.phase = 1
+	game.map_phase = 1
+	game.boss_phase = 1
+	game.station.set_phase(1)
 	game.boss_live = true
 	game.phase = 1
 	game.map_phase = 1

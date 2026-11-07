@@ -160,6 +160,11 @@ func draw_intro() -> void:
 
 func draw_hud() -> void:
 	var accent := MINT if game.phase == 0 else AMBER
+	if game.field_task.active and game.mode == "world":
+		draw_field_task()
+	if game.phase == 1 and game.gate_lock > 0.0:
+		draw_rect(Rect2(434, 26, 412, 40), Color("492831"))
+		write(Vector2(450, 53), "换相门封锁 %.1f 秒  /  追债人从 G-%02d 部署" % [game.gate_lock, game.deployment_gate + 1], 16, WHITE)
 	if game.big_map and game.mode == "world":
 		draw_big_map()
 		return
@@ -183,12 +188,15 @@ func draw_hud() -> void:
 	for i in range(relay_lines.size()):
 		write(Vector2(39,hint_y+hint_lines.size()*18+6+i*18),relay_lines[i],12,AMBER)
 	draw_rect(Rect2(1050, 28, 203, 76), Color(0.039, 0.057, 0.070, 0.78))
-	write(Vector2(1064, 54), "断相脉冲", 14, WHITE)
-	code(Vector2(1216, 54), "[F]", 12, accent)
-	for index in range(2):
-		draw_rect(Rect2(1064 + 87 * index, 68, 82, 3), alpha(accent, 0.88 if index < game.charges else 0.16))
+	if game.phase == 1:
+		write(Vector2(1064, 54), "断相脉冲", 14, WHITE)
+		code(Vector2(1216, 54), "[F]", 12, accent)
+		for index in range(2):
+			draw_rect(Rect2(1064 + 87 * index, 68, 82, 3), alpha(accent, 0.88 if index < game.charges else 0.16))
+	else:
+		write(Vector2(1064, 54), "晨区 · 安全调查", 14, accent)
 	write(Vector2(1064, 90), game.save_label(), 11, DIM)
-	if game.tactic_source == "deepseek":
+	if game.phase == 1 and game.tactic_source == "deepseek":
 		write(Vector2(1064, 120), "追债策略 / DeepSeek", 11, MINT)
 	if game.threat > 0.0:
 		var danger := Color(1.0, 0.13, 0.25, minf(0.75, game.threat))
@@ -218,6 +226,46 @@ func draw_hud() -> void:
 		button(Rect2(520, 410, 242, 48), "quit", "保存后退出")
 		button(Rect2(520, 474, 242, 34), "controls", "H  操作说明", DIM)
 		button(Rect2(520, 520, 242, 31), "restart_prompt", "重新开始调查", DIM)
+
+
+func draw_field_task() -> void:
+	var task = game.field_task
+	var tint := MINT if game.phase == 0 else AMBER
+	draw_rect(Rect2(416, 312, 610, 214), Color(0.025, 0.045, 0.055, 0.94))
+	draw_rect(Rect2(416, 312, 3, 214), tint)
+	write(Vector2(435, 340), task.title(), 20, tint)
+	write(Vector2(435, 367), task.instructions(), 14, WHITE)
+	match task.kind:
+		"circuit":
+			var lights: Array = task.lamps()
+			for index in range(3):
+				var x := 500.0 + index * 160.0
+				draw_circle(Vector2(x, 408), 14, MINT if lights[index] else Color("34464c"))
+				code(Vector2(x - 22, 449), "[%d] %s" % [index + 1, "ON" if task.switches[index] else "OFF"], 14, tint)
+			write(Vector2(435, 476), "线路图：① → 灯 A/C    ② → 灯 A/B    ③ → 灯 B", 14, DIM)
+		"clock":
+			for index in range(3):
+				var center := Vector2(516 + index * 165, 422)
+				draw_arc(center, 33, 0, TAU, 40, tint, 1.5, true)
+				for tick in range(8):
+					var direction := Vector2.from_angle(tick * TAU / 8.0 - PI / 2.0)
+					draw_line(center + direction * 27, center + direction * 32, DIM, 1.0, true)
+				var goal := Vector2.from_angle(task.targets[index] * TAU / 8.0 - PI / 2.0)
+				draw_circle(center + goal * 33, 5, WHITE, false, 1.5, true)
+				var pointer := Vector2.from_angle(task.dials[index] * TAU / 8.0 - PI / 2.0)
+				draw_line(center, center + pointer * 25, tint, 3.0, true)
+				code(center + Vector2(-28, 55), "[%d] %s" % [index + 1, "< >" if task.selection == index else ""], 14, WHITE)
+		"silent":
+			write(Vector2(435, 413), "静音读取  %.1f / 1.8 秒" % task.hold, 22, tint)
+			write(Vector2(435, 452), "按住 E 保持读取；WASD / Shift 会打断", 16, DIM)
+		"relay":
+			for index in range(3):
+				var x := 480.0 + index * 170.0
+				draw_rect(Rect2(x, 396, 110, 54), alpha(tint, 0.3 if index < task.progress else 0.07))
+				code(Vector2(x + 15, 430), "[%d] %s" % [index + 1, ["E-7", "OUT", "SYNC"][index]], 17, tint)
+			write(Vector2(435, 478), "已接 %d / 3   ·   接线窗口 %.1f 秒" % [task.progress, task.remaining], 16, WHITE)
+	if not task.message.is_empty():
+		write(Vector2(435, 512), task.message, 13, AMBER)
 
 
 func draw_minimap() -> void:
@@ -483,6 +531,12 @@ func draw_big_map() -> void:
 		var at: Vector2 = origin + (Vector2(station.GATES[index]) + Vector2(0.5, 0.5)) * cell_px
 		draw_rect(Rect2(at - Vector2(8, 8), Vector2(16, 16)), WHITE)
 		code(at + Vector2(-8, 4), "G%d" % (index + 1), 10, INK)
+	var hunter_positions: Array[Vector3] = game.extra_hunter_positions() if focus == 1 else []
+	if game.boss_live and game.boss_phase == focus: hunter_positions.append(game.boss.position)
+	for hunter_position in hunter_positions:
+		var hunter_mark := origin + (Vector2(hunter_position.x, hunter_position.z) / float(station.CELL) + Vector2(0.5, 0.5)) * cell_px
+		draw_circle(hunter_mark, 6.0, Color("ff667b"), true, -1.0, true)
+		code(hunter_mark + Vector2(-4, 4), "!", 11, INK)
 	var position: Vector3 = game.player.position
 	var mark: Vector2 = origin + (Vector2(position.x, position.z) / float(station.CELL) + Vector2(0.5, 0.5)) * cell_px
 	var forward: Vector3 = -game.player.basis.z

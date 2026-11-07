@@ -117,6 +117,19 @@ const BREAKS_DUSK := [
 	{"name": "A2", "stage": 4, "tiles": [Vector2i(13, 20), Vector2i(14, 20)]},
 ]
 const RETURN_MARKERS := [Vector2i(38, 20), Vector2i(33, 33), Vector2i(18, 38), Vector2i(7, 33), Vector2i(2, 20), Vector2i(7, 7), Vector2i(18, 2), Vector2i(33, 7), Vector2i(32, 25), Vector2i(15, 32), Vector2i(8, 15), Vector2i(25, 8), Vector2i(25, 25), Vector2i(15, 25), Vector2i(15, 15), Vector2i(25, 15)]
+# 常驻设施与剧情断点分开：整格寻路占位，实际外轮廓 3.6m，留在自己的 4m 格内。
+# 仅在宽走廊/广场摆放；避开关键点、换相门周围一格和回程箭头。
+const PERMANENT_MORNING := [
+	{"kind": "Equipment", "tiles": [Vector2i(14, 4), Vector2i(26, 4), Vector2i(20, 9), Vector2i(6, 15), Vector2i(34, 15), Vector2i(18, 18), Vector2i(30, 20), Vector2i(23, 23), Vector2i(4, 27), Vector2i(15, 34), Vector2i(26, 36)]},
+	{"kind": "Cargo", "tiles": [Vector2i(4, 4), Vector2i(35, 4), Vector2i(16, 16), Vector2i(38, 18), Vector2i(9, 20), Vector2i(21, 22), Vector2i(2, 22), Vector2i(34, 25), Vector2i(25, 34), Vector2i(4, 36), Vector2i(20, 38)]},
+	{"kind": "Service", "tiles": [Vector2i(20, 2), Vector2i(20, 12), Vector2i(23, 17), Vector2i(21, 18), Vector2i(2, 18), Vector2i(18, 21), Vector2i(17, 23), Vector2i(38, 22), Vector2i(6, 25), Vector2i(20, 29), Vector2i(35, 36), Vector2i(14, 36)]},
+]
+const PERMANENT_DUSK := [
+	{"kind": "Partition", "tiles": [Vector2i(14, 3), Vector2i(26, 3), Vector2i(17, 2), Vector2i(23, 2), Vector2i(19, 8), Vector2i(10, 10), Vector2i(35, 11), Vector2i(8, 14), Vector2i(18, 18), Vector2i(31, 20), Vector2i(21, 22), Vector2i(15, 24), Vector2i(31, 26), Vector2i(8, 32), Vector2i(35, 36)]},
+	{"kind": "Island", "tiles": [Vector2i(4, 4), Vector2i(35, 4), Vector2i(22, 8), Vector2i(29, 10), Vector2i(20, 12), Vector2i(16, 16), Vector2i(21, 18), Vector2i(8, 20), Vector2i(2, 23), Vector2i(24, 24), Vector2i(10, 28), Vector2i(31, 31), Vector2i(4, 36)]},
+	{"kind": "Concierge", "tiles": [Vector2i(8, 7), Vector2i(32, 7), Vector2i(5, 11), Vector2i(31, 14), Vector2i(23, 17), Vector2i(2, 17), Vector2i(37, 16), Vector2i(18, 21), Vector2i(37, 24), Vector2i(8, 26), Vector2i(29, 28), Vector2i(20, 29)]},
+]
+const OBSTACLE_FOOTPRINT := 3.6
 const AUDIT_MONITOR_SCENE := preload("res://assets/props/a01/SM_A01_Monitor.glb")
 const AUDIT_KEYBOARD := preload("res://assets/props/a01/SM_A01_Keyboard.glb")
 const AUDIT_FILE := preload("res://assets/props/a01/SM_A01_File.glb")
@@ -141,8 +154,17 @@ var map_stage := 1
 # game.gd 的章节下标不是剧情顺序（NEXT_CHAPTER = 0→3→1→4→2），断点阶段按剧情第几章算
 const STORY_STEP := {0: 1, 3: 2, 1: 3, 4: 4, 2: 5}
 var closed: Array[Dictionary] = [{}, {}]
+# tile -> kind；与 closed 分开，章节切换不会移除常驻占位。
+var permanent: Array[Dictionary] = [{}, {}]
+var permanent_nodes: Array[Dictionary] = [{}, {}]
 var barriers: Array[Array] = [[], []]
 var return_arrows: Array[Node3D] = []
+var gate_font: SystemFont
+const LaserGrid := preload("res://laser_grid.gd")
+var laser_grid := LaserGrid.new()
+var laser_edges: Dictionary = {}
+var laser_links: Array[Dictionary] = []
+var emitter_positions: Array[Dictionary] = [{}, {}]
 
 
 func build() -> void:
@@ -153,6 +175,8 @@ func build() -> void:
 		"frame": material(Color("22292d"), 0.48), "ink": material(Color("10171d")),
 		"ceramic": alloy(Color("8a9290")), "ivory": material(Color("edebe1"), 0.0, 1.4),
 		"mint": material(Color("69cdc1"), 0.0, 0.85), "amber": material(Color("e79a4c"), 0.0, 0.90),
+		"emitter_idle": material(Color("e79a4c")), "emitter_idle_morning": material(Color("54c9ff")),
+		"pillar_shell": material(Color("424b50"), 0.65), "pillar_recess": material(Color("10171d"), 0.2),
 		"blue": material(Color("54c9ff"), 0.0, 1.3), "red": material(Color("ff315f"), 0.0, 2.3),
 		"white": material(Color("b0cfda"), 0.1, 0.3), "dark": alloy(Color("5d4d44")),
 		"suit": material(Color("537285"), 0.2), "visor": material(Color("839dab"), 0.0, 0.30),
@@ -173,13 +197,17 @@ func build() -> void:
 		for z in range(MAP_SIZE.y):
 			for x in range(MAP_SIZE.x):
 				var tile := Vector2i(x, z)
-				if walkable(phase, tile):
+				# 基础建筑只读原始网格；先铺完整地板与外壳，再独立放设施。
+				if base_walkable(phase, tile):
 					build_tile(layer, phase, tile)
 				else:
 					grid.set_point_solid(tile)
 	for phase in range(2):
+		build_emitter_batches(phase)
+		build_permanent_obstacles(phase)
 		build_breaks(phase)
 		build_return_markers(phase)
+	laser_grid.setup(self, laser_links)
 	set_phase(0)
 
 
@@ -231,18 +259,23 @@ func animate_instruments(seconds: float) -> void:
 
 
 func set_phase(phase: int) -> void:
+	if phase == 0:
+		laser_grid.clear()
 	for index in range(maps.size()):
 		maps[index].visible = index == phase
 		maps[index].process_mode = Node.PROCESS_MODE_INHERIT if index == phase else Node.PROCESS_MODE_DISABLED
+	sync_witness_collision()
 
 
-func walkable(phase: int, tile: Vector2i) -> bool:
+func base_walkable(phase: int, tile: Vector2i) -> bool:
 	if not Rect2i(Vector2i.ZERO, MAP_SIZE).has_point(tile):
 		return false
 	var rows: Array = MORNING if phase == 0 else DUSK
-	if closed[phase].has(tile):
-		return false
 	return rows[tile.y][tile.x] != "#"
+
+
+func walkable(phase: int, tile: Vector2i) -> bool:
+	return base_walkable(phase, tile) and not closed[phase].has(tile) and not permanent[phase].has(tile)
 
 
 func point(tile: Vector2i) -> Vector3:
@@ -253,10 +286,35 @@ func cell(pos: Vector3) -> Vector2i:
 	return Vector2i(roundi(pos.x / CELL), roundi(pos.z / CELL))
 
 
+func hunter_path(phase: int, origin: Vector2i, destination: Vector2i) -> Array[Vector2i]:
+	# Security grids stop the player; hunters use the static walkable layout.
+	if not walkable(phase, origin) or not walkable(phase, destination): return []
+	return grids[phase].get_id_path(origin, destination)
+
+
 func path(phase: int, origin: Vector2i, destination: Vector2i) -> Array[Vector2i]:
 	if not walkable(phase, origin) or not walkable(phase, destination):
 		return []
-	return grids[phase].get_id_path(origin, destination)
+	if phase != 1 or laser_edges.is_empty():
+		return grids[phase].get_id_path(origin, destination)
+	# Edge barriers cannot be represented by whole-cell AStarGrid2D solids.
+	var pending: Array[Vector2i] = [origin]
+	var previous: Dictionary = {origin: origin}
+	var cursor := 0
+	while cursor < pending.size():
+		var at: Vector2i = pending[cursor]
+		cursor += 1
+		if at == destination:
+			var route: Array[Vector2i] = [destination]
+			while route[0] != origin:
+				route.push_front(previous[route[0]])
+			return route
+		for direction in DIRECTIONS:
+			var next: Vector2i = at + direction
+			if previous.has(next) or not walkable(phase, next) or laser_grid.blocked(at, next): continue
+			previous[next] = at
+			pending.append(next)
+	return []
 
 
 func find_exterior_cells(phase: int) -> void:
@@ -301,20 +359,85 @@ func build_tile(layer: Node3D, phase: int, tile: Vector2i) -> void:
 		var outward := point(direction).normalized()
 		var sideways := Vector3(-outward.z, 0, outward.x)
 		var edge := center + outward * 1.97
-		if not walkable(phase, tile + direction):
+		if not base_walkable(phase, tile + direction):
 			wall_panel(layer, edge, outward, sideways, wall, accent, tile, phase)
 		elif direction == Vector2i.RIGHT or direction == Vector2i.DOWN:
 			for sign_value in [-1, 1]:
 				# 柱子带碰撞（v6 宽场地里柱子立在空地中间，原来没碰撞，玩家会穿过去）
-				box(layer, edge + sideways * 1.87 * sign_value + Vector3.UP * 1.49, Vector3(0.23, 2.98, 0.23), palette.frame, true)
+				var pillar_position: Vector3 = edge + sideways * 1.87 * sign_value
+				box(layer, pillar_position + Vector3.UP * 1.49, Vector3(0.23, 2.98, 0.23), palette.frame, true)
+				build_laser_emitter(layer, phase, pillar_position)
 				var brace := box(layer, edge + sideways * 1.63 * sign_value + Vector3.UP * 2.62, axes(outward, 0.26, 0.57, 0.14), wall)
 				if absf(outward.z) > 0.5:
 					brace.rotation.z = sign_value * 0.69
 				else:
 					brace.rotation.x = sign_value * 0.69
 			box(layer, edge + Vector3.UP * 2.84, axes(outward, 0.30, 0.22, 3.8), palette.frame)
+			if phase == 1 and tile not in GATES and tile + direction not in GATES:
+				laser_links.append({"a": tile, "b": tile + direction, "center": edge,
+					"normal": outward, "key": laser_grid.edge_key(tile, tile + direction)})
 	if tile in [AUDIT, OFFICE, RELAY, LAB, MEDICAL, LEDGER] or tile in GATES:
 		fixture(layer, tile, phase, accent)
+
+
+func build_laser_emitter(_layer: Node3D, phase: int, pos: Vector3) -> void:
+	var key := Vector2i(roundi(pos.x * 10), roundi(pos.z * 10))
+	emitter_positions[phase][key] = pos
+
+
+func build_emitter_batches(phase: int) -> void:
+	# Recessed vertical service spines, shared across all pillars via instancing.
+	var parts: Array[Dictionary] = []
+	for end in [{"y": 0.14, "height": 0.28}, {"y": 2.76, "height": 0.40}]:
+		parts.append({"offset": Vector3.UP * end.y, "size": Vector3(0.32, end.height, 0.32), "surface": palette.pillar_shell})
+	for side in [-1, 1]:
+		parts.append({"offset": Vector3(side * 0.124, 1.49, 0), "size": Vector3(0.025, 2.42, 0.25), "surface": palette.pillar_shell})
+		parts.append({"offset": Vector3(0, 1.49, side * 0.124), "size": Vector3(0.25, 2.42, 0.025), "surface": palette.pillar_shell})
+		parts.append({"offset": Vector3(side * 0.14, 1.50, 0), "size": Vector3(0.012, 1.96, 0.105), "surface": palette.pillar_recess})
+		parts.append({"offset": Vector3(0, 1.50, side * 0.14), "size": Vector3(0.105, 1.96, 0.012), "surface": palette.pillar_recess})
+		# Small vents sit above the inset stripe, not three bulky collars.
+		for height in [2.30, 2.38, 2.46]:
+			parts.append({"offset": Vector3(side * 0.143, height, 0), "size": Vector3(0.014, 0.023, 0.16), "surface": palette.pillar_recess})
+			parts.append({"offset": Vector3(0, height, side * 0.143), "size": Vector3(0.16, 0.023, 0.014), "surface": palette.pillar_recess})
+	var accent: Material = palette.emitter_idle_morning if phase == 0 else palette.emitter_idle
+	parts.append_array(emitter_light_parts(accent))
+	for part in parts:
+		var batch := MultiMeshInstance3D.new()
+		batch.name = "UniformPillarEmitters_%d" % maps[phase].get_child_count()
+		var multimesh := MultiMesh.new()
+		multimesh.transform_format = MultiMesh.TRANSFORM_3D
+		var mesh := BoxMesh.new()
+		mesh.size = part.size
+		mesh.material = part.surface
+		multimesh.mesh = mesh
+		multimesh.instance_count = emitter_positions[phase].size()
+		var index := 0
+		for pos in emitter_positions[phase].values():
+			multimesh.set_instance_transform(index, Transform3D(Basis.IDENTITY, pos + part.offset))
+			index += 1
+		batch.multimesh = multimesh
+		maps[phase].add_child(batch)
+
+
+func emitter_light_parts(surface: Material) -> Array[Dictionary]:
+	var parts: Array[Dictionary] = []
+	for side in [-1, 1]:
+		parts.append({"offset": Vector3(side * 0.15, 1.48, 0), "size": Vector3(0.012, 1.42, 0.027), "surface": surface})
+		parts.append({"offset": Vector3(0, 1.48, side * 0.15), "size": Vector3(0.027, 1.42, 0.012), "surface": surface})
+		parts.append({"offset": Vector3(side * 0.15, 0.65, 0), "size": Vector3(0.012, 0.055, 0.063), "surface": surface})
+		parts.append({"offset": Vector3(0, 0.65, side * 0.15), "size": Vector3(0.063, 0.055, 0.012), "surface": surface})
+	return parts
+
+
+func build_active_emitter_glow(parent: Node3D, normal: Vector3) -> Array[MeshInstance3D]:
+	# Only the two endpoints of a live warning/grid glow; freed with that grid.
+	var sleeves: Array[MeshInstance3D] = []
+	var tangent := Vector3(-normal.z, 0, normal.x)
+	for side in [-1, 1]:
+		for part in emitter_light_parts(palette.amber):
+			# Slightly larger than the unlit sleeve to avoid coplanar surfaces.
+			sleeves.append(box(parent, tangent * 1.87 * side + part.offset, part.size * 1.04, part.surface))
+	return sleeves
 
 
 func add_fixture_light(layer: Node3D, phase: int, center: Vector3, tile: Vector2i) -> void:
@@ -373,13 +496,7 @@ func observation_window(layer: Node3D, edge: Vector3, sideways: Vector3, wall: M
 func fixture(layer: Node3D, tile: Vector2i, phase: int, accent: Material) -> void:
 	var center := point(tile)
 	if tile in GATES:
-		for offset in [-1.25, 1.25]:
-			box(layer, center + Vector3(offset, 1.35, 0), Vector3(0.20, 2.70, 0.35), palette.frame)
-			box(layer, center + Vector3(offset, 1.45, 0.20), Vector3(0.07, 2.24, 0.06), accent)
-		box(layer, center + Vector3(0, 2.61, 0), Vector3(2.53, 0.19, 0.37), palette.frame)
-		box(layer, center + Vector3(0, 0.031, 0), Vector3(2.25, 0.035, 0.22), accent)
-		var gate_name := "G-%02d" % (GATES.find(tile) + 1)
-		markers.append(sign_at(layer, center + Vector3(0, 2.39, 0), gate_name + " / PHASE GATE", accent.albedo_color))
+		build_phase_gate(layer, tile, accent)
 		return
 	var heading := "B-17 / LIN CEN"
 	if tile == AUDIT:
@@ -410,7 +527,7 @@ func fixture(layer: Node3D, tile: Vector2i, phase: int, accent: Material) -> voi
 	plate.pixel_size = 0.00165
 	plate.outline_size = 3
 	if tile == OFFICE:
-		box(layer, center + Vector3(-1.53, 0.42, 0.57), Vector3(0.59, 0.83, 0.63), palette.frame)
+		box(layer, center + Vector3(-1.53, 0.42, 0.57), Vector3(0.59, 0.83, 0.63), palette.frame, true)
 		box(layer, center + Vector3(-1.53, 0.76, 0.57), Vector3(0.63, 0.12, 0.68), accent)
 		build_witness(layer, center)
 	elif tile == LAB:
@@ -431,7 +548,7 @@ func fixture(layer: Node3D, tile: Vector2i, phase: int, accent: Material) -> voi
 			clock_face.rotation_degrees.z = 78.0 if radius < 0.5 else 31.0
 	elif tile == MEDICAL:
 		var pod := center + Vector3(-1.32, 0, 0.45)
-		box(layer, pod + Vector3.UP * 0.39, Vector3(0.86, 0.78, 1.79), palette.frame)
+		box(layer, pod + Vector3.UP * 0.39, Vector3(0.86, 0.78, 1.79), palette.frame, true)
 		box(layer, pod + Vector3.UP * 0.84, Vector3(0.80, 0.20, 1.68), palette.wall)
 		for offset in [-0.38, 0.38]:
 			box(layer, pod + Vector3(offset, 0.91, 0), Vector3(0.035, 0.025, 1.50), accent)
@@ -439,11 +556,62 @@ func fixture(layer: Node3D, tile: Vector2i, phase: int, accent: Material) -> voi
 	elif tile in [LEDGER, RELAY]:
 		for side in [-1, 1]:
 			var rack := center + Vector3(side * 1.52, 1.29, -1.14)
-			box(layer, rack, Vector3(0.53, 2.58, 0.49), palette.frame)
+			box(layer, rack, Vector3(0.53, 2.58, 0.49), palette.frame, true)
 			for row in range(5):
 				var height := 0.36 * row - 0.72
 				box(layer, rack + Vector3(0, height, 0.253), Vector3(0.36, 0.19, 0.07), palette.wall)
 				box(layer, rack + Vector3(0.11, height, 0.301), Vector3(0.07, 0.036, 0.024), accent)
+
+
+func build_phase_gate(layer: Node3D, tile: Vector2i, accent: Material) -> void:
+	# Solid frame with an open, walkable central doorway.
+	var center := point(tile)
+	var glow := material(accent.albedo_color, 0.0, 2.8)
+	var gate_name := "G-%02d" % (GATES.find(tile) + 1)
+	if gate_font == null:
+		gate_font = SystemFont.new()
+		gate_font.font_names = ["Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", "DengXian"]
+		gate_font.font_weight = 700
+	for side in [-1, 1]:
+		box(layer, center + Vector3(side * 1.30, 1.28, 0), Vector3(0.24, 2.56, 0.48), palette.frame, true)
+		box(layer, center + Vector3(side * 1.30, 0.10, 0), Vector3(0.38, 0.20, 0.64), palette.frame, true)
+		# A luminous outer edge remains visible when approaching along the corridor.
+		box(layer, center + Vector3(side * 1.445, 1.34, 0), Vector3(0.05, 2.20, 0.38), glow)
+		for face in [-1, 1]:
+			box(layer, center + Vector3(side * 1.30, 1.34, face * 0.27), Vector3(0.11, 2.20, 0.055), glow)
+			box(layer, center + Vector3(side * 1.30, 0.25, face * 0.28), Vector3(0.25, 0.10, 0.065), palette.ivory)
+	box(layer, center + Vector3(0, 2.63, 0), Vector3(2.84, 0.42, 0.56), palette.ink, true)
+	for face in [-1, 1]:
+		box(layer, center + Vector3(0, 2.88, face * 0.29), Vector3(2.84, 0.075, 0.065), glow)
+		box(layer, center + Vector3(0, 2.395, face * 0.29), Vector3(2.64, 0.065, 0.065), glow)
+		var title := gate_sign_at(layer, center + Vector3(0, 2.64, face * 0.295), gate_name + " / 换相门", accent.albedo_color, 0.0042)
+		title.rotation.y = 0.0 if face > 0 else PI
+		# Keep one marker per gate, with the existing G-XX prefix and markers API.
+		if face > 0:
+			markers.append(title)
+	for side in [-1, 1]:
+		var side_title := gate_sign_at(layer, center + Vector3(side * 1.43, 2.64, 0), gate_name + "\n换相门", accent.albedo_color, 0.0018)
+		side_title.rotation.y = side * PI / 2.0
+		box(layer, center + Vector3(side * 1.49, 0.060, 0), Vector3(0.07, 0.022, 3.40), glow)
+	for face in [-1, 1]:
+		box(layer, center + Vector3(0, 0.060, face * 1.70), Vector3(3.05, 0.022, 0.07), glow)
+		for distance in [0.82, 1.30]:
+			for side in [-1, 1]:
+				var chevron := box(layer, center + Vector3(side * 0.17, 0.065, face * distance), Vector3(0.07, 0.025, 0.48), glow)
+				chevron.rotation.y = side * face * PI / 4.0
+	box(layer, center + Vector3(0, 0.062, 0), Vector3(2.34, 0.026, 0.16), glow)
+
+
+func gate_sign_at(layer: Node3D, pos: Vector3, caption: String, color: Color, pixel_size: float) -> Label3D:
+	var label := sign_at(layer, pos, caption, color)
+	label.font = gate_font
+	label.font_size = 64
+	label.pixel_size = pixel_size
+	label.outline_size = 5
+	label.outline_modulate = Color("071418")
+	label.billboard = BaseMaterial3D.BILLBOARD_DISABLED
+	label.no_depth_test = false
+	return label
 
 
 func build_audit_details(layer: Node3D, desk: Vector3, screen: MeshInstance3D, monitor_shell: MeshInstance3D) -> void:
@@ -531,6 +699,17 @@ func build_witness(layer: Node3D, center: Vector3) -> void:
 	model.name = "LinCenModel"
 	model.rotation.y = PI
 	figure.add_child(model)
+	# The visual GLB has no collision; keep one lightweight body that follows the pose.
+	var body := StaticBody3D.new()
+	body.name = "WitnessCollision"
+	var shape := CollisionShape3D.new()
+	var bounds := CapsuleShape3D.new()
+	bounds.radius = 0.24
+	bounds.height = 1.72
+	shape.shape = bounds
+	body.add_child(shape)
+	figure.add_child(body)
+	body.position.y = 0.86
 	witnesses.append(figure)
 
 
@@ -538,10 +717,20 @@ func update_witness(chapter: int, seen: bool, approved: bool) -> void:
 	set_stage(STORY_STEP.get(chapter, 1))
 	witnesses[0].visible = chapter == 0 and not seen
 	witnesses[1].visible = chapter < 2
+	sync_witness_collision()
 	var alive := chapter == 1 and not approved
 	# The baked mesh extends 0.1945 m forward, which becomes its lowest point when prone.
 	witnesses[1].position = point(OFFICE) + Vector3(1.08, 0.0 if alive else 0.20, 0.42)
 	witnesses[1].rotation = Vector3(0.0 if alive else -PI / 2.0, -1.55 if alive else 0.0, 0.0)
+
+
+func sync_witness_collision() -> void:
+	for figure in witnesses:
+		var body := figure.get_node_or_null("WitnessCollision") as StaticBody3D
+		if body:
+			var active := figure.is_visible_in_tree()
+			body.collision_layer = 1 if active else 0
+			body.collision_mask = 1 if active else 0
 
 
 func axes(outward: Vector3, depth: float, height: float, width: float) -> Vector3:
@@ -608,6 +797,79 @@ func sign_at(parent: Node3D, pos: Vector3, caption: String, color: Color) -> Lab
 	return label
 
 
+func permanent_for(phase: int) -> Array:
+	return PERMANENT_MORNING if phase == 0 else PERMANENT_DUSK
+
+
+func build_permanent_obstacles(phase: int) -> void:
+	var container := Node3D.new()
+	container.name = "PermanentObstacles"
+	maps[phase].add_child(container)
+	for entry in permanent_for(phase):
+		for tile in entry.tiles:
+			permanent[phase][tile] = entry.kind
+			grids[phase].set_point_solid(tile)
+			var obstacle := Node3D.new()
+			obstacle.name = "Obstacle_%s_%d_%d" % [entry.kind, tile.x, tile.y]
+			container.add_child(obstacle)
+			obstacle.position = point(tile)
+			# 半圈旋转不改变正方形 footprint，所有装饰也收在该格内。
+			obstacle.rotation.y = PI if (tile.x + tile.y) % 2 == 0 else 0.0
+			obstacle.set_meta("tile", tile)
+			obstacle.set_meta("kind", entry.kind)
+			permanent_nodes[phase][tile] = obstacle
+			build_obstacle_shape(obstacle, phase, entry.kind)
+
+
+func build_obstacle_shape(obstacle: Node3D, phase: int, kind: String) -> void:
+	var accent: StandardMaterial3D = palette.mint if phase == 0 else palette.amber
+	var shell: Material = palette.ceramic if phase == 0 else palette.dark
+	var heights := {"Equipment": 2.20, "Cargo": 1.80, "Service": 1.95, "Partition": 2.05, "Island": 1.65, "Concierge": 2.30}
+	var height: float = heights[kind]
+	obstacle.set_meta("height", height)
+	# 一个完整静态实体，而非几块细杆；底座覆盖整格占位，不能从模型缝里钻过。
+	var body := StaticBody3D.new()
+	body.name = "ObstacleBody"
+	obstacle.add_child(body)
+	var collision := CollisionShape3D.new()
+	collision.name = "Footprint"
+	var bounds := BoxShape3D.new()
+	bounds.size = Vector3(OBSTACLE_FOOTPRINT, height, OBSTACLE_FOOTPRINT)
+	collision.shape = bounds
+	body.add_child(collision)
+	collision.position.y = height / 2.0
+	box(obstacle, Vector3(0, 0.10, 0), Vector3(3.6, 0.20, 3.6), palette.frame)
+	box(obstacle, Vector3(0, height / 2.0, 0), Vector3(3.48, height - 0.12, 3.48), shell)
+	box(obstacle, Vector3(0, height - 0.07, 0), Vector3(3.6, 0.14, 3.6), palette.frame if phase == 0 else palette.ceramic)
+	if kind == "Cargo":
+		# 运输箱组：两层货匣、压条与四角护件，不做散落废墟。
+		for side in [-1, 1]:
+			box(obstacle, Vector3(side * 0.82, 0.86, 0), Vector3(0.10, 1.52, 3.54), palette.frame)
+			box(obstacle, Vector3(0, 0.86, side * 1.75), Vector3(3.48, 0.12, 0.05), palette.frame)
+			box(obstacle, Vector3(0.90, 1.23, side * 1.78), Vector3(0.57, 0.30, 0.035), accent)
+	elif phase == 0:
+		# 设备柜/维修岛：双面柜门与百叶，追逐时能识别可绕的实体。
+		for side in [-1, 1]:
+			for panel in [-1, 1]:
+				box(obstacle, Vector3(panel * 0.84, height / 2.0, side * 1.75), Vector3(1.53, height - 0.40, 0.06), palette.alloy)
+				box(obstacle, Vector3(panel * 0.84, height - 0.36, side * 1.79), Vector3(0.96, 0.045, 0.025), accent)
+				for vent in range(3):
+					box(obstacle, Vector3(panel * 0.84, 0.48 + vent * 0.13, side * 1.79), Vector3(0.96, 0.035, 0.025), palette.frame)
+			if kind == "Service":
+				box(obstacle, Vector3(0, 1.31, side * 1.79), Vector3(0.42, 0.48, 0.025), palette.display)
+	else:
+		# 富人区的封闭隔断/陈列岛/礼宾设施：石材面板、规整金属嵌条。
+		for side in [-1, 1]:
+			box(obstacle, Vector3(0, height / 2.0, side * 1.75), Vector3(3.20, height - 0.40, 0.06), palette.ceramic)
+			box(obstacle, Vector3(0, 0.29, side * 1.79), Vector3(3.12, 0.045, 0.025), accent)
+			for panel in [-1, 1]:
+				box(obstacle, Vector3(panel * 1.03, height / 2.0, side * 1.79), Vector3(0.045, height - 0.47, 0.025), palette.dark)
+			if kind == "Concierge":
+				box(obstacle, Vector3(0, 1.48, side * 1.79), Vector3(1.06, 0.67, 0.025), palette.display_warm)
+			elif kind == "Partition":
+				box(obstacle, Vector3(0, height - 0.41, side * 1.79), Vector3(2.72, 0.085, 0.025), palette.dark)
+
+
 func breaks_for(phase: int) -> Array:
 	return BREAKS_MORNING if phase == 0 else BREAKS_DUSK
 
@@ -658,7 +920,7 @@ func apply_breaks(phase: int) -> void:
 				closed[phase][tile] = true
 			else:
 				closed[phase].erase(tile)
-			grids[phase].set_point_solid(tile, active)
+			grids[phase].set_point_solid(tile, not walkable(phase, tile))
 		for block in barriers[phase][index]:
 			block.visible = active
 			for body in block.find_children("*", "StaticBody3D", true, false):
