@@ -19,11 +19,13 @@ func run() -> void:
 	game.begin_upload()
 	var before: int = game.laps
 	var ticks := 0
+	var music_started := false
 	while ticks < 60 and game.mode == "world" and game.laps == before:
 		await physics_frame
 		game.tick_game_physics(0.1)
+		music_started = music_started or game.sound.chase.playing
 		ticks += 1
-	var caught: bool = game.laps > before and not game.cleared
+	var caught: bool = game.laps > before and not game.cleared and music_started
 	print("UPLOAD_PRESSURE_TEST: %s / stationary player caught in %.1fs; upload remains six seconds" % ["PASS" if caught else "FAIL", ticks * 0.1])
 	game.free()
 	await process_frame

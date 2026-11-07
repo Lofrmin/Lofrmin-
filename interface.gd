@@ -234,13 +234,10 @@ func draw_minimap() -> void:
 	for z in range(1, game.station.MAP_SIZE.y - 1):
 		for x in range(1, game.station.MAP_SIZE.x - 1):
 			var tile := Vector2i(x, z)
-			if not game.station.walkable(focus, tile) and not game.station.closed[focus].has(tile):
+			if not game.station.walkable(focus, tile):
 				continue
 			var center := projection * Vector2(tile)
 			if not Rect2(34, 70, 217, 170).has_point(center):
-				continue
-			if game.station.closed[focus].has(tile):
-				draw_circle(center, 3.8, alpha(Color("ff315f"), 0.85), true, -1.0, true)
 				continue
 			draw_circle(center, 3.8, track, true, -1.0, true)
 			for edge in [Vector2i.RIGHT, Vector2i.DOWN]:
@@ -472,14 +469,11 @@ func draw_big_map() -> void:
 	draw_rect(Rect2(origin - Vector2(14, 14), Vector2(side + 28, side + 28)), Color(0.040, 0.057, 0.068, 0.95))
 	draw_rect(Rect2(origin - Vector2(14, 14), Vector2(side + 28, side + 28)), alpha(tint, 0.55), false, 1.0)
 	var track := INK.lerp(tint, 0.30)
-	var red := Color("ff315f")
 	for z in range(station.MAP_SIZE.y):
 		for x in range(station.MAP_SIZE.x):
 			var tile := Vector2i(x, z)
 			var rect := Rect2(origin + Vector2(x, z) * cell_px, Vector2.ONE * (cell_px - 1.0))
-			if station.closed[focus].has(tile):
-				draw_rect(rect, alpha(red, 0.80))
-			elif station.walkable(focus, tile):
+			if station.walkable(focus, tile):
 				draw_rect(rect, track)
 	for tile in [station.AUDIT, station.OFFICE, station.LAB, station.RELAY, station.MEDICAL, station.LEDGER]:
 		var at: Vector2 = origin + (Vector2(tile) + Vector2(0.5, 0.5)) * cell_px
@@ -501,7 +495,7 @@ func draw_big_map() -> void:
 	if focus != game.phase:
 		write(Vector2(origin.x + 120, origin.y - 26), "（另一时态，你的位置是同坐标）", 12, DIM)
 	write(Vector2(origin.x + side - 210, origin.y - 26), "M 关闭 · Tab 切晨暮", 13, tint)
-	write(Vector2(origin.x - 14, origin.y + side + 34), "A 调查台  B 办公室  C 时钟实验室  D 生命维持  L 结算  R 中继  G 换相门  红＝已封闭断点", 12, DIM)
+	write(Vector2(origin.x - 14, origin.y + side + 34), "A 调查台  B 办公室  C 时钟实验室  D 生命维持  L 结算  R 中继  G 换相门", 12, DIM)
 	draw_rect(Rect2(25,130,300,112),Color(0.025,0.039,0.047,0.94))
 	draw_rect(Rect2(25,130,2,112),Color("ff9a91") if game.boss_live else tint)
 	write(Vector2(39,153),"实时地图：世界未暂停",14,WHITE)
@@ -509,6 +503,7 @@ func draw_big_map() -> void:
 	if game.boss_live:
 		write(Vector2(39,199),game.threat_text(),13,Color("ff9a91"))
 	write(Vector2(39,226),"M / Esc 收起，再按 Esc 暂停",12,DIM)
+
 
 
 func draw_dev_panel() -> void:

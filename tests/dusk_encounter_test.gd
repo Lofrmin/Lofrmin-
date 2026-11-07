@@ -102,6 +102,19 @@ func run() -> void:
 	check(is_equal_approx(game.dusk_grace, 0.4), "a repeated gate crossing cannot refresh entry grace")
 	check(game.charges == stored_charges and is_equal_approx(game.stunned, 0.7), "gate toggling cannot reset pulse or stun")
 
+	var map_key := InputEventKey.new()
+	map_key.pressed = true
+	map_key.physical_keycode = KEY_M
+	game._input(map_key)
+	var time_before: float = game.time_in_lap
+	game.tick_game_physics(0.1)
+	check(game.big_map and game.time_in_lap > time_before, "full map keeps the world simulation running")
+	map_key.physical_keycode = KEY_ESCAPE
+	game._input(map_key)
+	check(not game.big_map and game.mode == "world", "first Escape closes the live map")
+	game._input(map_key)
+	check(game.mode == "paused" and not game.sound.chase.playing, "second Escape pauses and stops chase ambience")
+	game._input(map_key)
 	game.reset_lap("test loop")
 	check(game.phase == 0 and not game.boss_live and game.boss_route.is_empty(), "a new loop returns safely to Morning and clears the previous encounter")
 	check(not game.dusk_grace_used and is_zero_approx(game.dusk_grace) and game.charges == 2, "a fresh loop starts with fresh encounter protection and pulse charges")

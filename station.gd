@@ -127,6 +127,8 @@ var witnesses: Array[Node3D] = []
 var box_meshes: Dictionary = {}
 var instruments: Array[Node3D] = []
 var observation_glass: ShaderMaterial
+# Solid cells connected to space, excluding enclosed interior wall islands.
+var exterior_cells: Array[Dictionary] = [{}, {}]
 var audit_labels: Array[Label3D] = []
 var return_signs: Array[Label3D] = []
 var use_audit_monitor_prop := true
@@ -154,6 +156,7 @@ func build() -> void:
 		"display": display_surface(Color("6df9d8")), "display_warm": display_surface(Color("f5ab63")),
 	}
 	for phase in range(2):
+		find_exterior_cells(phase)
 		var layer := Node3D.new()
 		layer.name = ["Morning", "Dusk"][phase]
 		add_child(layer)
@@ -252,6 +255,26 @@ func path(phase: int, origin: Vector2i, destination: Vector2i) -> Array[Vector2i
 	return grids[phase].get_id_path(origin, destination)
 
 
+func find_exterior_cells(phase: int) -> void:
+	var rows: Array = MORNING if phase == 0 else DUSK
+	var outside: Dictionary = exterior_cells[phase]
+	outside.clear()
+	var pending: Array[Vector2i] = [Vector2i.ZERO]
+	outside[Vector2i.ZERO] = true
+	var cursor := 0
+	while cursor < pending.size():
+		var tile: Vector2i = pending[cursor]
+		cursor += 1
+		for direction in DIRECTIONS:
+			var neighbor: Vector2i = tile + direction
+			if not Rect2i(Vector2i.ZERO, MAP_SIZE).has_point(neighbor):
+				continue
+			if rows[neighbor.y][neighbor.x] != "#" or outside.has(neighbor):
+				continue
+			outside[neighbor] = true
+			pending.append(neighbor)
+
+
 func build_tile(layer: Node3D, phase: int, tile: Vector2i) -> void:
 	var center := point(tile)
 	var accent: StandardMaterial3D = palette.mint if phase == 0 else palette.amber
@@ -302,8 +325,16 @@ func add_fixture_light(layer: Node3D, phase: int, center: Vector3, tile: Vector2
 
 
 func wall_panel(layer: Node3D, edge: Vector3, outward: Vector3, sideways: Vector3, wall: Material, accent: Material, tile: Vector2i, phase: int) -> void:
-	if tile.y == 1 and outward == Vector3.FORWARD:
-		observation_window(layer, edge, sideways, wall, phase)
+	var neighbor := tile + Vector2i(roundi(outward.x), roundi(outward.z))
+	if exterior_cells[phase].has(neighbor):
+		var window := Node3D.new()
+		window.name = "OuterWindow_%d_%d_%d_%d" % [tile.x, tile.y, roundi(outward.x), roundi(outward.z)]
+		layer.add_child(window)
+		window.position = edge
+		# The reference window is built facing north. Rotate its entire frame,
+		# glass and collision together for each edge of the stepped outer hull.
+		window.rotation.y = atan2(-outward.x, -outward.z)
+		observation_window(window, Vector3.ZERO, Vector3.RIGHT, wall, phase)
 		return
 	box(layer, edge + Vector3.UP * 1.51, axes(outward, 0.15, 3.02, 4), wall, true)
 	box(layer, edge - outward * 0.10 + Vector3.UP * 1.53, axes(outward, 0.09, 1.63, 3.37), palette.frame)

@@ -8,6 +8,7 @@ var orbit: Camera3D
 var habitat: Node3D
 var opening_earth: MeshInstance3D
 var window_earth: MeshInstance3D
+var window_moon: MeshInstance3D
 var key_light: DirectionalLight3D
 
 
@@ -27,8 +28,13 @@ func build(environment: Environment) -> void:
 	var opening_surface := surface.duplicate() as ShaderMaterial
 	opening_surface.set_shader_parameter("sun_direction", SUN)
 	opening_earth = planet(ORIGIN + Vector3(-4.4, -13.0, -27.0), 22.5, opening_surface)
-	window_earth = planet(Vector3(19, -46, -116), 60.0, surface)
+	# Center the orbital backdrop on the expanded 41x41 station.
+	window_earth = planet(Vector3(80, -112, -360), 180.0, surface)
 	window_earth.hide()
+	var lunar_surface := ShaderMaterial.new()
+	lunar_surface.shader = preload("res://moon.gdshader")
+	window_moon = planet(Vector3(260, 38, -310), 24.0, lunar_surface)
+	window_moon.hide()
 
 	key_light = DirectionalLight3D.new()
 	key_light.light_color = Color("f9efe0")
@@ -88,3 +94,4 @@ func finish() -> void:
 	key_light.hide()
 	window_earth.rotation.y = opening_earth.rotation.y
 	window_earth.show()
+	window_moon.show()
