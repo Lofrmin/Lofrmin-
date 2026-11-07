@@ -82,11 +82,29 @@ var charge_recovery := 0.0
 var path_timer := 0.0
 var tracking_time := 0.0
 var patrol_index := 0
+# 阶段 A：卡死诊断与有界恢复（保留调试观察，不是 Release F1 入口）
+var boss_stall_time := 0.0          # 连续无进展时长（秒）
+const BOSS_STALL_REPLAN := 1.2      # 持续 1.2s 无进展强制重规划
+const BOSS_RECOVER_STEP := 0.18     # 起点重叠时单次推出步长（米）
+const BOSS_RECOVER_MAX := 0.72      # 累计最大推出距离（米），超过放弃避免传送
 var boss_route: Array[Vector2i] = []
 var last_known: Vector2i = Station.LAB
 var cross_gate: Vector2i = Station.GATES[0]
 var gate_observed := [0, 0]   # 后端只认两扇门：北侧门记 0/1，南侧门按东西并入
 var sprint_observed := 0
+# 阶段 B：仅本轮运行时的体力，不写入 profile/数据库；重启与新轮回恢复满值
+const STAMINA_MAX := 100.0
+const STAMINA_DRAIN_RATE := 25.0
+const STAMINA_REGEN_RATE := 100.0 / 6.0
+const STAMINA_REGEN_DELAY := 1.25
+const STAMINA_RESTART_THRESHOLD := 25.0
+const PLAYER_WALK_SPEED := 4.45
+const PLAYER_SPRINT_SPEED := 6.25
+const BOSS_CHASE_SPEED := 5.2  # 候选实测值：使耗尽后的步行有压力；速度完整记录于交付参数表
+var stamina := STAMINA_MAX
+var stamina_regen_wait := 0.0
+var stamina_exhausted := false
+var actual_sprinting := false  # 唯一供脚步/敌人听觉/观测使用的有效冲刺状态
 var tactic := "patrol"
 var tactic_gate := 0
 var tactic_source := "rules"
@@ -201,6 +219,7 @@ func _process(delta: float) -> void:
 		note_timer -= delta
 	if mode == "world":
 		station.animate_instruments(time_in_lap)
+		station.animate_relay(delta)
 	optics.set_shader_parameter("transition", clampf((shift_cooldown - 1.02) * 3.0, 0.0, 1.0))
 	optics.set_shader_parameter("defocus", 1.0 if mode in ["audit", "keypad", "paused", "restart_confirm", "controls"] else 0.0)
 	interface.queue_redraw()
@@ -236,28 +255,40 @@ func _physics_process(delta: float) -> void:
 	shift_cooldown = maxf(0.0, shift_cooldown - delta)
 	var move := Vector2(float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A)), float(Input.is_physical_key_pressed(KEY_S)) - float(Input.is_physical_key_pressed(KEY_W)))
 	var direction := player.basis * Vector3(move.x, 0, move.y).normalized()
-	var sprint := Input.is_physical_key_pressed(KEY_SHIFT) and move.length_squared() > 0
-	var speed := 6.25 if sprint else 4.45
+	var shift_held := Input.is_physical_key_pressed(KEY_SHIFT)
+	var wants_sprint := shift_held and move.length_squared() > 0
+	# 耗尽后必须松开 Shift 且恢复至 25%，禁止长按/连点在零附近闪烁冲刺。
+	var sprint_intent := wants_sprint and not stamina_exhausted and stamina > 0.00001
+	var speed := PLAYER_SPRINT_SPEED if sprint_intent else PLAYER_WALK_SPEED
 	player.velocity = Vector3(direction.x * speed, -6.0, direction.z * speed)
 	var previous_player := player.position
 	player.move_and_slide()
-	sound.player_moved(previous_player, player.position, player.is_on_floor(), sprint)
+	# 有效冲刺 = Shift + 有移动意图 + 真实地面位移；顶墙/原地按 Shift 不扣体力、不传奔跑听觉。
+	var ground_distance := Vector2(player.position.x - previous_player.x, player.position.z - previous_player.z).length()
+	var moved := player.is_on_floor() and move.length_squared() > 0 and ground_distance > 0.001
+	apply_stamina_tick(delta, shift_held, moved)
+	sound.player_moved(previous_player, player.position, player.is_on_floor(), actual_sprinting)
 	if player.position.y < -3.0:
 		reset_lap("地板重力异常。审计匣已复原。")
 		return
 	if boss_live:
 		var previous_boss := boss.position
-		update_boss(delta, sprint)
+		update_boss(delta, actual_sprinting)
 		boss_rig.update_motion(delta, boss.position.distance_to(previous_boss) / delta, stunned > 0.0 or boss_delay > 0.0 or charge_warning > 0.0)
 		sound.hunter_moved(previous_boss, boss.position, boss_live and boss_phase == phase and boss_delay <= 0.0 and stunned <= 0.0)
 	sound.update_chase(delta, threat, boss_live and boss_chasing and boss_phase == phase and boss_delay <= 0.0 and stunned <= 0.0)
 	if upload > 0.0:
 		upload -= delta
+		# P1：上传中持续刷新中继面板倒计时
+		for rig in station.relay_rigs:
+			var lbl: Label3D = rig.status_label
+			lbl.text = "TX %.1fs" % maxf(upload, 0.0)
 		if upload <= 0.0 and mode == "world" and patched:
 			cleared = true
 			store_progress()
 			set_mode("ending")
 			sound.cue("success")
+			sync_relay_visual()
 
 
 func _input(event: InputEvent) -> void:
@@ -457,6 +488,13 @@ func spawn_at_desk() -> void:
 func update_witness() -> void:
 	station.update_witness(chapter, evidence[0], case_accepted)
 	station.update_audit_status(audit_status_text())
+	sync_relay_visual()
+
+
+# P1：同步 R-03 / E-7 中继装饰节点的视觉，与 game.relay_status 阶段一致
+func sync_relay_visual() -> void:
+	if is_instance_valid(station) and station.has_method("update_relay_state"):
+		station.update_relay_state(solved, armed, patched, upload, cleared)
 
 
 func audit_status_text() -> String:
@@ -646,9 +684,11 @@ func inspect_relay() -> void:
 			armed = true
 			say("旧疏散广播已启动。换相后接上暮区 E-7。")
 			activate_boss(station.GATES[1])
+			sync_relay_visual()
 		elif phase == 1 and armed:
 			patched = true
 			say("中继接通。回晨区调查台，外发完整账本。")
+			sync_relay_visual()
 		else:
 			say("需先在晨区合上应急开关。")
 	else:
@@ -691,7 +731,7 @@ func guidance() -> String:
 	if boss_live and phase == 0 and upload <= 0.0:
 		return "晨区暂时安全，可回 A-01 整理证据。"
 	if boss_live:
-		return "Shift 奔跑 · F 断相：需同区、无遮挡。"
+		return "Shift 短冲刺消耗体力 · F 断相：需同区、无遮挡。"
 	if chapter == 1 and case_accepted:
 		return "R 撤销本轮签字，已归档证据不会丢失。"
 	if chapter == 0 and not evidence[0]:
@@ -790,6 +830,7 @@ func complete_puzzle() -> void:
 		set_mode("world")
 		say("线路核验完成：晨区合上开关，暮区接上中继。")
 		sound.cue("success")
+		sync_relay_visual()
 		return
 	var conclusion: String = [
 		"同一间办公室。去时钟实验室查一查，这份任务究竟什么时候被建立。",
@@ -832,6 +873,7 @@ func begin_upload() -> void:
 	charge_time = 0.0
 	charge_recovery = 0.8
 	boss_route.clear()
+	boss_stall_time = 0.0
 	tracking_time = 6.0
 	upload = 6.0
 	last_known = station.AUDIT
@@ -839,6 +881,7 @@ func begin_upload() -> void:
 	set_mode("world")
 	say("上行信号已暴露。撑过六秒，回执会写入审计匣。")
 	sound.cue("archive")
+	sync_relay_visual()
 
 
 func say(message: String) -> void:
@@ -880,6 +923,10 @@ func shift(tile: Vector2i) -> void:
 
 func dusk_spawn_tile() -> Vector2i:
 	var origin: Vector2i = station.cell(player.position)
+	if tactic == "ambush":
+		var gate: Vector2i = station.GATES[tactic_gate]
+		if station.path(1, origin, gate).size() >= 9:
+			return gate
 	for target in [station.LAB, station.LEDGER, station.RELAY, station.OFFICE]:
 		var route: Array[Vector2i] = station.path(1, origin, target)
 		if route.size() >= 9:
@@ -897,6 +944,7 @@ func activate_boss(tile: Vector2i) -> void:
 	tracking_time = 0.0
 	patrol_index = 0
 	path_timer = 0.0
+	boss_stall_time = 0.0
 	boss_route.clear()
 	sound.cue("deploy")
 
@@ -920,6 +968,13 @@ func update_boss(delta: float, sprint: bool) -> void:
 	threat = 0.2 if not same_phase else clampf(1.1 - distance / 15.0, 0.14, 0.92)
 	if boss_delay > 0.0 or stunned > 0.0:
 		return
+	if same_phase and boss_motion_fraction(boss.position, boss.position) < 0.001:
+		var recovered := try_boss_overlap_recovery(boss.position)
+		if recovered != boss.position:
+			boss.position = recovered
+			boss_stall_time = 0.0
+			boss_route.clear()
+			return
 	var seen := same_phase and distance < 13.0 and has_sight()
 	tracking_time = maxf(0.0, tracking_time - delta)
 	if seen or (same_phase and sprint and distance < 10.5):
@@ -974,11 +1029,15 @@ func update_boss(delta: float, sprint: bool) -> void:
 		target = player_target
 		boss_route.clear()
 	else:
-		if boss_route.is_empty() or (path_timer <= 0.0 and boss.position.distance_to(center) < 0.22):
+		# 阶段 A：持续无进展时无视格心距离强制重规划
+		var stalled_replan := boss_stall_time >= BOSS_STALL_REPLAN
+		if boss_route.is_empty() or stalled_replan or (path_timer <= 0.0 and boss.position.distance_to(center) < 0.22):
 			boss_route = station.path(boss_phase, cell_at_boss, destination)
 			if not boss_route.is_empty() and boss.position.distance_to(center) < 0.22:
 				boss_route.pop_front()
 			path_timer = 0.30
+			if stalled_replan:
+				boss_stall_time = 0.0  # 重规划后清零，避免每帧都重算
 		if not boss_route.is_empty():
 			target = station.point(boss_route[0])
 		if seen:
@@ -989,9 +1048,16 @@ func update_boss(delta: float, sprint: bool) -> void:
 			boss_route.pop_front()
 		return
 	boss.look_at(target, Vector3.UP)
-	var speed := 7.2 if charge_time > 0.0 else (4.45 if upload > 0.0 else (3.77 if seen else 3.27))
+	var speed := 7.2 if charge_time > 0.0 else (4.45 if upload > 0.0 else (BOSS_CHASE_SPEED if seen else 3.27))
 	var next := boss.position.move_toward(target, speed * delta)
+	var prev_pos := boss.position
 	boss.position = boss.position.lerp(next, boss_motion_fraction(boss.position, next))
+	# 阶段 A：跟踪"应该移动但无进展"
+	var progressed := prev_pos.distance_to(boss.position) > 0.0005
+	if progressed:
+		boss_stall_time = 0.0
+	else:
+		boss_stall_time += delta
 
 
 func boss_motion_fraction(origin: Vector3, target: Vector3) -> float:
@@ -1006,6 +1072,50 @@ func boss_motion_fraction(origin: Vector3, target: Vector3) -> float:
 	if not space.intersect_shape(query, 1).is_empty(): return 0.0
 	var safe: float = space.cast_motion(query)[0]
 	return maxf(0.0, safe - 0.01 / maxf(query.motion.length(), 0.01)) if safe < 1.0 else 1.0
+
+
+# 阶段 A：起点胶囊轻微重叠时的有界安全恢复
+# 沿 8 个水平方向尝试小步推出，找到第一个不重叠的位置
+# 不传送：单次推出 ≤ BOSS_RECOVER_MAX（0.72m），且只在 capsule 不再 overlap 时接受
+# 不修改碰撞体、不关闭碰撞检查、不穿越墙体
+func try_boss_overlap_recovery(origin: Vector3) -> Vector3:
+	var space := get_world_3d().direct_space_state
+	var query := PhysicsShapeQueryParameters3D.new()
+	query.shape = boss_body
+	var start := origin + Vector3.UP * 0.86
+	query.transform = Transform3D(Basis(), start)
+	query.margin = 0.005
+	query.exclude = [player.get_rid()]
+	var ignored: Array[RID] = [player.get_rid()]
+	for hit in space.intersect_shape(query):
+		if not ignored.has(hit.rid): ignored.append(hit.rid)
+	# 8 个水平方向 + 优先朝当前 tile 中心（更可能回到走廊）
+	var tile_center: Vector3 = station.point(station.cell(origin))
+	var to_center := (tile_center - origin)
+	to_center.y = 0.0
+	var directions: Array[Vector3] = []
+	if to_center.length() > 0.01:
+		directions.append(to_center.normalized())
+	for angle in [0.0, PI/4, PI/2, PI*3/4, PI, PI*5/4, PI*3/2, PI*7/4]:
+		directions.append(Vector3(cos(angle), 0, sin(angle)))
+	for step in range(1, int(BOSS_RECOVER_MAX / BOSS_RECOVER_STEP) + 1):
+		for dir in directions:
+			var offset := dir * (step * BOSS_RECOVER_STEP)
+			var candidate := origin + offset
+			if not station.walkable(boss_phase, station.cell(candidate)): continue
+			query.transform.origin = start + offset
+			query.exclude = [player.get_rid()]
+			if not space.intersect_shape(query, 1).is_empty(): continue
+			# Ignore only initial contacts in the sweep, but never cross a wall with the body center.
+			var ray := PhysicsRayQueryParameters3D.create(start, start + offset, 1, [player.get_rid()])
+			if not space.intersect_ray(ray).is_empty(): continue
+			query.transform.origin = start
+			query.exclude = ignored
+			query.motion = offset
+			var safe := space.cast_motion(query)[0]
+			query.motion = Vector3.ZERO
+			if safe >= 1.0: return candidate
+	return origin  # 有界尝试失败：放弃，不强行传送
 
 
 func boss_detour_path(target: Vector3) -> PackedVector3Array:
@@ -1032,6 +1142,30 @@ func has_sight() -> bool:
 	var query := PhysicsRayQueryParameters3D.create(boss.position + Vector3.UP * 1.45, player.position + Vector3.UP * 1.32)
 	query.exclude = [player.get_rid()]
 	return get_world_3d().direct_space_state.intersect_ray(query).is_empty()
+
+
+func apply_stamina_tick(delta: float, shift_held: bool, moved: bool) -> void:
+	# 测试与物理循环共用：只有 Shift+有效位移才扣；耗尽后必须松开才解锁。
+	var wants := shift_held and moved
+	if wants and not stamina_exhausted and stamina > 0.0:
+		var sprint_time := minf(delta, stamina / STAMINA_DRAIN_RATE)
+		stamina = maxf(0.0, stamina - STAMINA_DRAIN_RATE * sprint_time)
+		stamina_regen_wait = STAMINA_REGEN_DELAY
+		if stamina <= 0.00001:
+			stamina = 0.0
+			stamina_exhausted = true
+			actual_sprinting = false
+			stamina_regen_wait = STAMINA_REGEN_DELAY
+		else:
+			actual_sprinting = true
+		return
+	else:
+		actual_sprinting = false
+		var regen_time := maxf(0.0, delta - stamina_regen_wait)
+		stamina_regen_wait = maxf(0.0, stamina_regen_wait - delta)
+		stamina = minf(STAMINA_MAX, stamina + STAMINA_REGEN_RATE * regen_time)
+		if stamina_exhausted and stamina >= STAMINA_RESTART_THRESHOLD and not shift_held:
+			stamina_exhausted = false
 
 
 func pulse() -> void:
@@ -1083,16 +1217,22 @@ func reset_lap(message: String) -> void:
 	boss_chasing = false
 	boss.hide()
 	boss_route.clear()
+	boss_stall_time = 0.0
 	stunned = 0.0
 	charge_warning = 0.0
 	charge_time = 0.0
 	charge_recovery = 0.0
 	gate_observed = [0, 0]
 	sprint_observed = 0
+	stamina = STAMINA_MAX
+	stamina_regen_wait = 0.0
+	stamina_exhausted = false
+	actual_sprinting = false
 	spawn_at_desk()
 	set_mode("world")
 	store_progress()
 	say(message)
+	sync_relay_visual()
 
 
 func save_label() -> String:

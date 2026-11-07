@@ -127,7 +127,7 @@ func draw_controls() -> void:
 	code(Vector2(238,123), "FIELD MANUAL / 事故调查员操作手册", 12)
 	write(Vector2(238,172), "先找记录，再回调查台核验。", 29)
 	var keys := ["W A S D / 鼠标", "E", "Shift / F", "M / Tab", "Esc / H", "R（出现提示时）"]
-	var descriptions := ["移动 / 环视", "调查物件；在 G 门切换晨区与暮区", "奔跑 / 断相脉冲：需同区、无遮挡，每轮两次", "大地图 / 预览另一时态，不会改变你所在的时态", "暂停 / 查看操作说明", "撤销本轮接案签字，保留已归档证据"]
+	var descriptions := ["移动 / 环视", "调查物件；在 G 门切换晨区与暮区", "按住 Shift 短冲刺消耗体力，步行可恢复 / F 断相脉冲每轮两次", "大地图 / 预览另一时态，不会改变你所在的时态", "暂停 / 查看操作说明", "撤销本轮接案签字，保留已归档证据"]
 	for i in range(keys.size()):
 		var y := 226.0 + i * 45.0
 		write(Vector2(241,y),keys[i],16,MINT)
@@ -182,19 +182,30 @@ func draw_hud() -> void:
 		write(Vector2(39,hint_y+i*18),hint_lines[i],12,DIM)
 	for i in range(relay_lines.size()):
 		write(Vector2(39,hint_y+hint_lines.size()*18+6+i*18),relay_lines[i],12,AMBER)
-	draw_rect(Rect2(1050, 28, 203, 76), Color(0.039, 0.057, 0.070, 0.78))
-	write(Vector2(1064, 54), "断相脉冲", 14, WHITE)
-	code(Vector2(1216, 54), "[F]", 12, accent)
+	draw_rect(Rect2(1050, 28, 203, 132 if game.tactic_source == "deepseek" else 120), Color(0.039, 0.057, 0.070, 0.88))
+	write(Vector2(1064, 50), "断相脉冲", 13, WHITE)
+	code(Vector2(1216, 50), "[F]", 11, accent)
 	for index in range(2):
-		draw_rect(Rect2(1064 + 87 * index, 68, 82, 3), alpha(accent, 0.88 if index < game.charges else 0.16))
-	write(Vector2(1064, 90), game.save_label(), 11, DIM)
+		draw_rect(Rect2(1064 + 87 * index, 61, 82, 3), alpha(accent, 0.88 if index < game.charges else 0.16))
+	write(Vector2(1064, 84), game.save_label(), 10, DIM)
+	# 体力：填充 + 数值 + 文字状态；低体力/耗尽不只靠颜色
+	write(Vector2(1064, 106), "体力 %d%%" % roundi(game.stamina), 12, WHITE)
+	code(Vector2(1216, 106), "SHIFT", 10, accent)
+	draw_rect(Rect2(1064, 114, 174, 5), alpha(DIM, 0.25))
+	draw_rect(Rect2(1064, 114, 174.0 * game.stamina / game.STAMINA_MAX, 5), alpha(AMBER if game.stamina < 25.0 else accent, 0.94))
+	var stamina_hint := "步行恢复" if game.stamina < game.STAMINA_MAX else "可短冲刺"
+	if game.stamina_regen_wait > 0.0 and not game.stamina_exhausted:
+		stamina_hint = "恢复准备"
+	if game.stamina_exhausted:
+		stamina_hint = "耗尽 · 松开 Shift 至 25%" if game.stamina < game.STAMINA_RESTART_THRESHOLD else "已达 25% · 松开 Shift 解锁"
+	write(Vector2(1064, 136), stamina_hint, 11, AMBER if game.stamina_exhausted else DIM)
 	if game.tactic_source == "deepseek":
-		write(Vector2(1064, 120), "追债策略 / DeepSeek", 11, MINT)
+		write(Vector2(1064, 152), "追债策略 / DeepSeek", 11, MINT)
 	if game.threat > 0.0:
 		var danger := Color(1.0, 0.13, 0.25, minf(0.75, game.threat))
 		for border in [0.0, 5.0, 12.0]:
 			draw_rect(Rect2(border, border, 1280 - border * 2, 720 - border * 2), alpha(danger, danger.a * (0.34 if border == 0.0 else 0.16)), false, 3.0)
-		write(Vector2(1050, 147), game.threat_text(), 15, Color("f4a1a0"))
+		write(Vector2(1050, 182), game.threat_text(), 15, Color("f4a1a0"))
 	draw_circle(Vector2(640, 360), 2.0, Color(0.06, 0.10, 0.13, 0.67))
 	draw_circle(Vector2(640, 360), 1.1, WHITE)
 	var prompt: String = game.interaction_prompt()
