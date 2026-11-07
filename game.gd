@@ -42,6 +42,11 @@ var intro_page := 0
 var fresh_investigation := false
 var phase := 0
 var map_phase := 0
+var big_map := false   # M 打开/关闭全屏大地图；Tab 切换晨暮地图
+var dev_mode := false   # F1 开关（只在调试运行时有效）
+var dev_god := false
+var dev_spot := -1
+const STORY_ORDER := [0, 3, 1, 4, 2]   # 章节下标按剧情顺序：01 → 02 → 03 → 04 → 05
 var chapter := 0
 var laps := 1
 var intro_time := 0.0
@@ -72,9 +77,9 @@ var path_timer := 0.0
 var tracking_time := 0.0
 var patrol_index := 0
 var boss_route: Array[Vector2i] = []
-var last_known := Vector2i(4, 3)
-var cross_gate := Vector2i(1, 3)
-var gate_observed := [0, 0]
+var last_known: Vector2i = Station.LAB
+var cross_gate: Vector2i = Station.GATES[0]
+var gate_observed := [0, 0]   # 后端只认两扇门：北侧门记 0/1，南侧门按东西并入
 var sprint_observed := 0
 var tactic := "patrol"
 var tactic_gate := 0
@@ -307,7 +312,16 @@ func _input(event: InputEvent) -> void:
 					KEY_E: interact()
 					KEY_F: pulse()
 					KEY_M:
+						big_map = not big_map
+					KEY_TAB:
 						map_phase = 1 - map_phase
+					KEY_F1:
+						if OS.is_debug_build():
+							dev_mode = not dev_mode
+							say("开发者模式：%s" % ("开" if dev_mode else "关"))
+					KEY_F2, KEY_F3, KEY_F4, KEY_F5, KEY_F6, KEY_F7:
+						if dev_mode:
+							dev_key(event.physical_keycode)
 					KEY_R:
 						if chapter == 1 and case_accepted:
 							reset_lap("你撤销了本轮接案，回到任务广播前。")
@@ -479,7 +493,7 @@ func interact() -> void:
 			case_accepted = true
 			sound.cue("archive")
 			update_witness()
-			say("接案已签收。目标：晨区 B-17。按 M 查看地图。")
+			say("接案已签收。目标：晨区 B-17。按 M 打开大地图。")
 			return
 		if chapter == 1 and phase == 0:
 			evidence[1] = true
@@ -633,7 +647,7 @@ func objective() -> String:
 
 func guidance() -> String:
 	if map_phase != phase:
-		return "M 只是地图预览；到 G 门按 E 才能换区。"
+		return "Tab 只是地图预览；到 G 门按 E 才能换区。"
 	if unbanked:
 		return "现场记录尚未归档，先回晨区 A-01。"
 	if boss_live:
@@ -749,7 +763,7 @@ func shift(tile: Vector2i) -> void:
 		return
 	if boss_live and boss_phase == phase and boss.position.distance_to(player.position) < 9.0:
 		var index: int = station.GATES.find(tile)
-		gate_observed[index] += 1
+		gate_observed[index % 2] += 1
 	phase = 1 - phase
 	map_phase = phase
 	station.set_phase(phase)
@@ -804,7 +818,7 @@ func update_boss(delta: float, sprint: bool) -> void:
 		tracking_time = 3.0
 		if sprint and not seen:
 			sprint_observed = 1
-	if same_phase and distance < 1.10:
+	if same_phase and distance < 1.10 and not dev_god:
 		reset_lap("追债人完成结算。审计匣里的记录随你回到了开场。")
 		return
 	if charge_warning > 0.0:
@@ -833,7 +847,7 @@ func update_boss(delta: float, sprint: bool) -> void:
 	elif tactic == "cutoff" and not seen and not sprint and upload <= 0.0:
 		destination = station.GATES[tactic_gate]
 	elif tactic == "guard" and not seen and not sprint and upload <= 0.0:
-		destination = Vector2i(2, 1)
+		destination = station.GUARD
 	elif not seen and tracking_time <= 0.0 and upload <= 0.0:
 		var sweep := [station.RELAY, station.GATES[1], station.OFFICE, station.GATES[0]]
 		if boss.position.distance_to(station.point(sweep[patrol_index])) < 0.25:
@@ -959,3 +973,85 @@ func apply_tactic(lap: int, strategy: String, gate: int, source: String) -> void
 		tactic = strategy
 		tactic_gate = clampi(gate, 0, 1)
 		tactic_source = source
+
+
+# ───────── 开发者模式（F1）：检验流程用 ─────────
+func dev_key(code: Key) -> void:
+	match code:
+		KEY_F2: dev_next_chapter()
+		KEY_F3: dev_teleport()
+		KEY_F4:
+			evidence = [true, true, true]
+			unbanked = false
+			store_progress()
+			say("开发者：本章三条证据已取得。回 A-01 解谜。")
+		KEY_F5:
+			dev_god = not dev_god
+			say("开发者：无敌 %s（追债人碰到不结算）" % ("开" if dev_god else "关"))
+		KEY_F6:
+			if boss_live:
+				boss_live = false
+				boss.hide()
+				boss_route.clear()
+				say("开发者：追债人已撤回。")
+			else:
+				activate_boss(station.RELAY)
+				say("开发者：追债人已在 R-03 部署（当前时态）。")
+		KEY_F7:
+			if chapter == 2 and solved:
+				if not armed:
+					armed = true
+					say("开发者：E-7 晨区开关已合上。")
+				elif not patched:
+					patched = true
+					say("开发者：E-7 暮区已接通。回晨区 A-01 外发。")
+				else:
+					cleared = true
+					store_progress()
+					set_mode("ending")
+			else:
+				evidence = [true, true, true]
+				complete_puzzle()
+
+
+func dev_next_chapter() -> void:
+	var at := STORY_ORDER.find(chapter)
+	chapter = STORY_ORDER[(at + 1) % STORY_ORDER.size()]
+	evidence = [false, false, false]
+	solved = false
+	cleared = false
+	reset_lap("开发者：跳到第 %s 章。" % chapter_title())
+
+
+func dev_spots() -> Array:
+	var spots := [["A-01 调查台", station.AUDIT], ["B-17 办公室", station.OFFICE], ["C-04 时钟实验室", station.LAB],
+		["D-09 生命维持", station.MEDICAL], ["L-06 配额结算", station.LEDGER], ["R-03 应急中继", station.RELAY]]
+	for index in range(station.GATES.size()):
+		spots.append(["G-%02d 换相门" % (index + 1), station.GATES[index]])
+	for entry in station.breaks_for(phase):
+		if station.map_stage >= int(entry.stage):
+			spots.append(["断点 %s" % entry.name, entry.tiles[entry.tiles.size() / 2]])
+	return spots
+
+
+func dev_teleport() -> void:
+	var spots := dev_spots()
+	dev_spot = (dev_spot + 1) % spots.size()
+	var target: Vector2i = spots[dev_spot][1]
+	var stand := target
+	if not station.walkable(phase, stand):   # 断点墙本身不可走：站到旁边 3 格内最近的空地
+		var best := 1 << 30
+		for dz in range(-4, 5):
+			for dx in range(-4, 5):
+				var spot: Vector2i = target + Vector2i(dx, dz)
+				var d: int = absi(dx) + absi(dz)
+				if station.walkable(phase, spot) and d >= 2 and d < best:
+					best = d
+					stand = spot
+	player.position = station.point(stand) + Vector3.UP * 0.05
+	player.velocity = Vector3.ZERO
+	if stand != target:
+		var look: Vector3 = station.point(target)
+		player.look_at(Vector3(look.x, player.position.y, look.z), Vector3.UP)
+	camera.rotation.x = -0.1
+	say("开发者：传送 → %s（%d/%d）" % [spots[dev_spot][0], dev_spot + 1, spots.size()])

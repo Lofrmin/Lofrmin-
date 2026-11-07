@@ -1,26 +1,122 @@
 extends Node3D
 
 const CELL := 4.0
-const MAP_SIZE := Vector2i(15, 11)
+# v6 环形地图（2026-11-07）：41×41，外环/中环/内环/中心四层；数据由 03_资产/R01_环形地图/layout/export_station.py 生成
+const MAP_SIZE := Vector2i(41, 41)
 const MORNING := [
-	"###############", "#A...........O#", "#.####.########", "#G..C...R....H#",
-	"#.##..#..####.#", "#...D...L.....#", "#.#..#..#...#.#", "#...#.....#...#",
-	"#.###.###.###.#", "#.............#", "###############",
+	"#########################################",
+	"################.........################",
+	"##.....######..#.........#..######.....##",
+	"##.....####...................####.....##",
+	"##.....##.......#########.......##.....##",
+	"##.....#.........#######.........#.....##",
+	"##.........###...#######...###.........##",
+	"######....####.............####....######",
+	"#####...#######...........#######...#####",
+	"####....#####....##...##....#####....####",
+	"####...#####...####...####...#####...####",
+	"###...#####..######...######..#####...###",
+	"###...####..#######...#######..####...###",
+	"##....###..#######.....#######..###....##",
+	"##......#..#####.........#####..#......##",
+	"###.......#####...#####...#####.......###",
+	"#...#.....####.....###.....####.....#...#",
+	"#...###..#####.............#####..###...#",
+	"#...###..####..#.........#..####..###...#",
+	"#...###........##.......##........###...#",
+	"#...###........##.......##........###...#",
+	"#...###........##.......##........###...#",
+	"#...###..####..#.........#..####..###...#",
+	"#...###..#####.............#####..###...#",
+	"#...#.....####.....###.....####.....#...#",
+	"###.......#####...#####...#####.......###",
+	"##......#..#####.........#####..#......##",
+	"##....###..#######.....#######..###....##",
+	"###...####..#######...#######..####...###",
+	"###...#####..######...######..#####...###",
+	"####...#####...####...####...#####...####",
+	"####....#####....##...##....#####....####",
+	"#####...#######...........#######...#####",
+	"######....####.............####....######",
+	"##.........###...#######...###.........##",
+	"##.....#.........#######.........#.....##",
+	"##.....##.......#########.......##.....##",
+	"##.....####...................####.....##",
+	"##.....######..#.........#..######.....##",
+	"################.........################",
+	"#########################################",
 ]
 const DUSK := [
-	"###############", "#A....#......O#", "#.####.######.#", "#G..C...R....H#",
-	"#.##..#..####.#", "#...D...L.....#", "#.#..#..#...#.#", "#...#.....#...#",
-	"#.###.###.###.#", "#.............#", "###############",
+	"#########################################",
+	"################.........################",
+	"##.....######...............######.....##",
+	"##.....####...................####.....##",
+	"##.....##.......#########.......##.....##",
+	"##.....#.....#...#######...#.....#.....##",
+	"##..........##...#.....#...##..........##",
+	"######....####.............####....######",
+	"#####......##...............##......#####",
+	"####.................................####",
+	"####...#........###...###........#...####",
+	"###.....#.....#####...#####.....#.....###",
+	"###..........######...######..........###",
+	"##....#.....######.....######.....#....##",
+	"##....#....#####.........#####....#....##",
+	"##...#.....####...#####...####.....#...##",
+	"#.........####.....###.....####.........#",
+	"#.........####.............####.........#",
+	"#...##....###..#.........#..###....##...#",
+	"#..............##.......##..............#",
+	"#..............##.......##..............#",
+	"#..............##.......##..............#",
+	"#...##....###..#.........#..###....##...#",
+	"#.........####.............####.........#",
+	"#.........####.....###.....####.........#",
+	"##...#.....#......#####......#.....#...##",
+	"##....#...........................#....##",
+	"##....#......#..##.....##..#......#....##",
+	"###.............###...###.............###",
+	"###.....#......####...####......#.....###",
+	"####...#........###...###........#...####",
+	"####.................................####",
+	"#####......##...............##......#####",
+	"######....#####...........#####....######",
+	"##..........######.....######..........##",
+	"##.....#.....######...######.....#.....##",
+	"##.....##.......###...###.......##.....##",
+	"##.....####...................####.....##",
+	"##.....######...............######.....##",
+	"################.........################",
+	"#########################################",
 ]
 const DIRECTIONS := [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]
-const AUDIT := Vector2i(1, 1)
-const OFFICE := Vector2i(13, 1)
-const RELAY := Vector2i(8, 3)
-const LAB := Vector2i(4, 3)
-const MEDICAL := Vector2i(4, 5)
-const LEDGER := Vector2i(8, 5)
-const GATES := [Vector2i(1, 3), Vector2i(13, 3)]
-const RETURN_MARKERS := [Vector2i(13,1), Vector2i(12,3), Vector2i(2,3), Vector2i(4,3), Vector2i(8,3), Vector2i(4,5), Vector2i(8,5), Vector2i(1,9), Vector2i(13,9)]
+const AUDIT := Vector2i(15, 6)
+const OFFICE := Vector2i(25, 6)
+const RELAY := Vector2i(20, 31)
+const LAB := Vector2i(20, 20)
+const MEDICAL := Vector2i(20, 14)
+const LEDGER := Vector2i(20, 26)
+# 4 扇换相门：北 2（贴 A-01/B-17，与 demo 一致）＋南 2（贴 R-03/L-06 一侧）。到最近门平均 14 格，demo 是 6 格
+const GATES := [Vector2i(11, 4), Vector2i(29, 4), Vector2i(11, 36), Vector2i(29, 36)]
+# 追债人 guard 战术的守点（原 game.gd 写死 Vector2i(2, 1)，即 A-01 旁一格）
+const GUARD := Vector2i(16, 7)
+const BREAKS_MORNING := [
+	{"name": "C1", "stage": 2, "tiles": [Vector2i(35, 28), Vector2i(36, 26), Vector2i(36, 27), Vector2i(36, 28), Vector2i(36, 29), Vector2i(37, 27), Vector2i(37, 28), Vector2i(37, 29), Vector2i(38, 27)]},
+	{"name": "C2", "stage": 2, "tiles": [Vector2i(2, 13), Vector2i(3, 11), Vector2i(3, 12), Vector2i(3, 13), Vector2i(4, 11), Vector2i(4, 12), Vector2i(4, 13), Vector2i(4, 14), Vector2i(5, 12)]},
+	{"name": "B1", "stage": 3, "tiles": [Vector2i(8, 25), Vector2i(9, 25), Vector2i(9, 26)]},
+	{"name": "B2", "stage": 3, "tiles": [Vector2i(31, 14), Vector2i(31, 15), Vector2i(32, 15)]},
+	{"name": "A1", "stage": 4, "tiles": [Vector2i(26, 20), Vector2i(27, 20)]},
+	{"name": "A2", "stage": 4, "tiles": [Vector2i(13, 20), Vector2i(14, 20)]},
+]
+const BREAKS_DUSK := [
+	{"name": "C1", "stage": 2, "tiles": [Vector2i(19, 37), Vector2i(19, 38), Vector2i(19, 39), Vector2i(20, 37), Vector2i(20, 38), Vector2i(20, 39), Vector2i(21, 37), Vector2i(21, 38), Vector2i(21, 39)]},
+	{"name": "C2", "stage": 2, "tiles": [Vector2i(19, 1), Vector2i(19, 2), Vector2i(19, 3), Vector2i(20, 1), Vector2i(20, 2), Vector2i(20, 3), Vector2i(21, 1), Vector2i(21, 2), Vector2i(21, 3)]},
+	{"name": "B1", "stage": 3, "tiles": [Vector2i(25, 30), Vector2i(25, 31), Vector2i(25, 32), Vector2i(25, 33), Vector2i(26, 31), Vector2i(26, 32)]},
+	{"name": "B2", "stage": 3, "tiles": [Vector2i(12, 30), Vector2i(12, 31), Vector2i(13, 29), Vector2i(13, 30), Vector2i(13, 31), Vector2i(13, 32), Vector2i(14, 30)]},
+	{"name": "A1", "stage": 4, "tiles": [Vector2i(26, 20), Vector2i(27, 20)]},
+	{"name": "A2", "stage": 4, "tiles": [Vector2i(13, 20), Vector2i(14, 20)]},
+]
+const RETURN_MARKERS := [Vector2i(38, 20), Vector2i(33, 33), Vector2i(18, 38), Vector2i(7, 33), Vector2i(2, 20), Vector2i(7, 7), Vector2i(18, 2), Vector2i(33, 7), Vector2i(32, 25), Vector2i(15, 32), Vector2i(8, 15), Vector2i(25, 8), Vector2i(25, 25), Vector2i(15, 25), Vector2i(15, 15), Vector2i(25, 15)]
 const AUDIT_MONITOR_SCENE := preload("res://assets/props/a01/SM_A01_Monitor.glb")
 
 var maps: Array[Node3D] = []
@@ -34,6 +130,13 @@ var observation_glass: ShaderMaterial
 var audit_labels: Array[Label3D] = []
 var return_signs: Array[Label3D] = []
 var use_audit_monitor_prop := true
+# 断点：随章节逐段封闭（S2~S4 ＝ 第 1~3 章）。封闭的格子 walkable=false、A* solid、有碰撞墙
+var map_stage := 1
+# game.gd 的章节下标不是剧情顺序（NEXT_CHAPTER = 0→3→1→4→2），断点阶段按剧情第几章算
+const STORY_STEP := {0: 1, 3: 2, 1: 3, 4: 4, 2: 5}
+var closed: Array[Dictionary] = [{}, {}]
+var barriers: Array[Array] = [[], []]
+var return_arrows: Array[Node3D] = []
 
 
 func build() -> void:
@@ -68,6 +171,7 @@ func build() -> void:
 				else:
 					grid.set_point_solid(tile)
 	for phase in range(2):
+		build_breaks(phase)
 		build_return_markers(phase)
 	set_phase(0)
 
@@ -76,9 +180,15 @@ func return_hint(phase: int, tile: Vector2i) -> Dictionary:
 	var target: Vector2i = AUDIT
 	var label := "A-01 / 回调查台"
 	if phase == 1:
-		var west: Array[Vector2i] = path(phase, tile, GATES[0])
-		var east: Array[Vector2i] = path(phase, tile, GATES[1])
-		var gate := 1 if west.is_empty() or (not east.is_empty() and east.size() < west.size()) else 0
+		var gate := -1
+		var best := 1 << 30
+		for index in range(GATES.size()):
+			var route_to: Array[Vector2i] = path(phase, tile, GATES[index])
+			if not route_to.is_empty() and route_to.size() < best:
+				best = route_to.size()
+				gate = index
+		if gate < 0:
+			return {}
 		target = GATES[gate]
 		label = "G-0%d / 换回晨区" % (gate + 1)
 	var route: Array[Vector2i] = path(phase, tile, target)
@@ -94,6 +204,7 @@ func build_return_markers(phase: int) -> void:
 		if hint.is_empty(): continue
 		var arrow := Node3D.new()
 		maps[phase].add_child(arrow)
+		return_arrows.append(arrow)
 		arrow.position = point(tile) + Vector3(0, 0.055, 0.7)
 		var direction: Vector3 = Vector3(hint.direction.x, 0, hint.direction.y)
 		arrow.rotation.y = Vector3.FORWARD.signed_angle_to(direction, Vector3.UP)
@@ -122,6 +233,8 @@ func walkable(phase: int, tile: Vector2i) -> bool:
 	if not Rect2i(Vector2i.ZERO, MAP_SIZE).has_point(tile):
 		return false
 	var rows: Array = MORNING if phase == 0 else DUSK
+	if closed[phase].has(tile):
+		return false
 	return rows[tile.y][tile.x] != "#"
 
 
@@ -152,7 +265,7 @@ func build_tile(layer: Node3D, phase: int, tile: Vector2i) -> void:
 		box(layer, center + Vector3(offset, 0.026, 0), Vector3(0.032, 0.024, 2.90), palette.frame)
 		box(layer, center + Vector3(offset, 0.039, 0.55), Vector3(0.027, 0.016, 0.62), accent)
 	box(layer, center + Vector3(0, 2.89, 0), Vector3(0.77, 0.12, 2.10), palette.ink)
-	var active_light := (tile.x + tile.y) % 4 != 0 or tile in [AUDIT, OFFICE, LAB, RELAY]
+	var active_light := (tile.x + 2 * tile.y) % 3 == 0 or tile in [AUDIT, OFFICE, LAB, RELAY, MEDICAL, LEDGER]
 	for offset in [-0.21, 0.21]:
 		box(layer, center + Vector3(offset, 2.815, 0), Vector3(0.085, 0.04, 1.82), (palette.ivory if phase == 0 else palette.amber) if active_light else palette.wall)
 	if active_light:
@@ -165,7 +278,8 @@ func build_tile(layer: Node3D, phase: int, tile: Vector2i) -> void:
 			wall_panel(layer, edge, outward, sideways, wall, accent, tile, phase)
 		elif direction == Vector2i.RIGHT or direction == Vector2i.DOWN:
 			for sign_value in [-1, 1]:
-				box(layer, edge + sideways * 1.87 * sign_value + Vector3.UP * 1.49, Vector3(0.23, 2.98, 0.23), palette.frame)
+				# 柱子带碰撞（v6 宽场地里柱子立在空地中间，原来没碰撞，玩家会穿过去）
+				box(layer, edge + sideways * 1.87 * sign_value + Vector3.UP * 1.49, Vector3(0.23, 2.98, 0.23), palette.frame, true)
 				var brace := box(layer, edge + sideways * 1.63 * sign_value + Vector3.UP * 2.62, axes(outward, 0.26, 0.57, 0.14), wall)
 				if absf(outward.z) > 0.5:
 					brace.rotation.z = sign_value * 0.69
@@ -229,7 +343,7 @@ func fixture(layer: Node3D, tile: Vector2i, phase: int, accent: Material) -> voi
 			box(layer, center + Vector3(offset, 1.45, 0.20), Vector3(0.07, 2.24, 0.06), accent)
 		box(layer, center + Vector3(0, 2.61, 0), Vector3(2.53, 0.19, 0.37), palette.frame)
 		box(layer, center + Vector3(0, 0.031, 0), Vector3(2.25, 0.035, 0.22), accent)
-		var gate_name := "G-01" if tile == GATES[0] else "G-02"
+		var gate_name := "G-%02d" % (GATES.find(tile) + 1)
 		markers.append(sign_at(layer, center + Vector3(0, 2.39, 0), gate_name + " / PHASE GATE", accent.albedo_color))
 		return
 	var heading := "B-17 / LIN CEN"
@@ -360,6 +474,7 @@ func build_witness(layer: Node3D, center: Vector3) -> void:
 
 
 func update_witness(chapter: int, seen: bool, approved: bool) -> void:
+	set_stage(STORY_STEP.get(chapter, 1))
 	witnesses[0].visible = chapter == 0 and not seen
 	witnesses[1].visible = chapter < 2
 	var alive := chapter == 1 and not approved
@@ -429,3 +544,60 @@ func sign_at(parent: Node3D, pos: Vector3, caption: String, color: Color) -> Lab
 	parent.add_child(label)
 	label.position = pos
 	return label
+
+
+func breaks_for(phase: int) -> Array:
+	return BREAKS_MORNING if phase == 0 else BREAKS_DUSK
+
+
+func build_breaks(phase: int) -> void:
+	var wall: Material = palette.ceramic if phase == 0 else palette.dark
+	var accent: StandardMaterial3D = palette.red
+	for entry in breaks_for(phase):
+		var group: Array[Node3D] = []
+		for tile in entry.tiles:
+			var center := point(tile)
+			var block := Node3D.new()
+			block.name = "Break_%s_%d_%d" % [entry.name, tile.x, tile.y]
+			maps[phase].add_child(block)
+			block.position = center
+			box(block, Vector3(0, 1.51, 0), Vector3(3.9, 3.02, 3.9), wall, true)
+			box(block, Vector3(0, 1.51, 1.96), Vector3(3.2, 0.06, 0.02), accent)
+			box(block, Vector3(0, 1.51, -1.96), Vector3(3.2, 0.06, 0.02), accent)
+			box(block, Vector3(1.96, 1.51, 0), Vector3(0.02, 0.06, 3.2), accent)
+			box(block, Vector3(-1.96, 1.51, 0), Vector3(0.02, 0.06, 3.2), accent)
+			group.append(block)
+		barriers[phase].append(group)
+	apply_breaks(phase)
+
+
+func set_stage(stage: int) -> void:
+	if stage == map_stage:
+		return
+	map_stage = stage
+	for phase in range(maps.size()):
+		apply_breaks(phase)
+	for arrow in return_arrows:
+		arrow.queue_free()
+	for label in return_signs:
+		label.queue_free()
+	return_arrows.clear()
+	return_signs.clear()
+	for phase in range(maps.size()):
+		build_return_markers(phase)
+
+
+func apply_breaks(phase: int) -> void:
+	var entries: Array = breaks_for(phase)
+	for index in range(entries.size()):
+		var active: bool = map_stage >= int(entries[index].stage)
+		for tile in entries[index].tiles:
+			if active:
+				closed[phase][tile] = true
+			else:
+				closed[phase].erase(tile)
+			grids[phase].set_point_solid(tile, active)
+		for block in barriers[phase][index]:
+			block.visible = active
+			for body in block.find_children("*", "StaticBody3D", true, false):
+				body.collision_layer = 1 if active else 0

@@ -126,8 +126,8 @@ func draw_controls() -> void:
 	slab(Rect2(200,83,880,560),MINT,0.98)
 	code(Vector2(238,123), "FIELD MANUAL / 事故调查员操作手册", 12)
 	write(Vector2(238,172), "先找记录，再回调查台核验。", 29)
-	var keys := ["W A S D / 鼠标", "E", "Shift / F", "M", "Esc / H", "R（出现提示时）"]
-	var descriptions := ["移动 / 环视", "调查物件；在 G 门切换晨区与暮区", "奔跑 / 断相脉冲：需同区、无遮挡，每轮两次", "切换地图预览，不会改变你所在的时态", "暂停 / 查看操作说明", "撤销本轮接案签字，保留已归档证据"]
+	var keys := ["W A S D / 鼠标", "E", "Shift / F", "M / Tab", "Esc / H", "R（出现提示时）"]
+	var descriptions := ["移动 / 环视", "调查物件；在 G 门切换晨区与暮区", "奔跑 / 断相脉冲：需同区、无遮挡，每轮两次", "大地图 / 预览另一时态，不会改变你所在的时态", "暂停 / 查看操作说明", "撤销本轮接案签字，保留已归档证据"]
 	for i in range(keys.size()):
 		var y := 226.0 + i * 45.0
 		write(Vector2(241,y),keys[i],16,MINT)
@@ -160,7 +160,12 @@ func draw_intro() -> void:
 
 func draw_hud() -> void:
 	var accent := MINT if game.phase == 0 else AMBER
+	if game.big_map and game.mode == "world":
+		draw_big_map()
+		return
 	draw_minimap()
+	if game.dev_mode:
+		draw_dev_panel()
 	var objective_lines := text_lines(game.objective(),340,15)
 	var hint_lines := text_lines(game.guidance(),340,12)
 	var relay_lines := text_lines(game.relay_status(),340,12) if game.chapter == 2 else PackedStringArray()
@@ -229,9 +234,14 @@ func draw_minimap() -> void:
 	for z in range(1, game.station.MAP_SIZE.y - 1):
 		for x in range(1, game.station.MAP_SIZE.x - 1):
 			var tile := Vector2i(x, z)
-			if not game.station.walkable(focus, tile):
+			if not game.station.walkable(focus, tile) and not game.station.closed[focus].has(tile):
 				continue
 			var center := projection * Vector2(tile)
+			if not Rect2(34, 70, 217, 170).has_point(center):
+				continue
+			if game.station.closed[focus].has(tile):
+				draw_circle(center, 3.8, alpha(Color("ff315f"), 0.85), true, -1.0, true)
+				continue
 			draw_circle(center, 3.8, track, true, -1.0, true)
 			for edge in [Vector2i.RIGHT, Vector2i.DOWN]:
 				if game.station.walkable(focus, tile + edge):
@@ -251,14 +261,15 @@ func draw_minimap() -> void:
 	arrow.append(tip)
 	draw_polyline(arrow, INK, 1.3, true)
 	write(Vector2(40, 253), "另一时态预览" if alternate else "↑  视角朝上", 11, DIM)
-	write(Vector2(174, 253), "M  切换", 11, tint)
+	write(Vector2(150, 253), "M 大地图 · Tab 晨暮", 11, tint)
 
 
 func minimap_projection() -> Transform2D:
 	var forward: Vector3 = -game.player.basis.z
 	var rotation := -PI * 0.5 - Vector2(forward.x, forward.z).angle()
 	var layout := Transform2D(rotation, Vector2.ZERO).scaled_local(Vector2.ONE * 11.6)
-	var deck_center := (Vector2(game.station.MAP_SIZE) - Vector2.ONE) * 0.5
+	# 大地图：小地图以玩家为中心滚动（原来以整张地图中心为准，41×41 会画出框外）
+	var deck_center := Vector2(game.player.position.x, game.player.position.z) / float(game.station.CELL)
 	layout.origin = Vector2(142.5, 153) - layout.basis_xform(deck_center)
 	return layout
 
@@ -422,3 +433,69 @@ func draw_restart() -> void:
 	write(Vector2(410, 340), "确认后清除本机章节与证据；取消则保留。", 18, DIM)
 	button(Rect2(410, 405, 193, 45), "cancel_restart", "Esc  返回", MINT)
 	button(Rect2(624, 405, 248, 45), "restart_case", "清除进度并开始新调查", AMBER)
+
+
+func draw_big_map() -> void:
+	# 全屏大地图：北朝上、整张图，Tab 切晨暮，M 关闭
+	var focus: int = game.map_phase
+	var tint := MINT if focus == 0 else AMBER
+	var station = game.station
+	var cell_px := 14.0
+	var side: float = cell_px * station.MAP_SIZE.x
+	var origin := Vector2(640 - side * 0.5, 372 - side * 0.5)
+	draw_rect(Rect2(0, 0, 1280, 720), Color(0.015, 0.024, 0.031, 0.88))
+	draw_rect(Rect2(origin - Vector2(14, 14), Vector2(side + 28, side + 28)), Color(0.040, 0.057, 0.068, 0.95))
+	draw_rect(Rect2(origin - Vector2(14, 14), Vector2(side + 28, side + 28)), alpha(tint, 0.55), false, 1.0)
+	var track := INK.lerp(tint, 0.30)
+	var red := Color("ff315f")
+	for z in range(station.MAP_SIZE.y):
+		for x in range(station.MAP_SIZE.x):
+			var tile := Vector2i(x, z)
+			var rect := Rect2(origin + Vector2(x, z) * cell_px, Vector2.ONE * (cell_px - 1.0))
+			if station.closed[focus].has(tile):
+				draw_rect(rect, alpha(red, 0.80))
+			elif station.walkable(focus, tile):
+				draw_rect(rect, track)
+	for tile in [station.AUDIT, station.OFFICE, station.LAB, station.RELAY, station.MEDICAL, station.LEDGER]:
+		var at: Vector2 = origin + (Vector2(tile) + Vector2(0.5, 0.5)) * cell_px
+		draw_circle(at, 8.0, tint, true, -1.0, true)
+		code(at + Vector2(-4, 4), map_symbol(tile), 11, INK)
+	for index in range(station.GATES.size()):
+		var at: Vector2 = origin + (Vector2(station.GATES[index]) + Vector2(0.5, 0.5)) * cell_px
+		draw_rect(Rect2(at - Vector2(8, 8), Vector2(16, 16)), WHITE)
+		code(at + Vector2(-8, 4), "G%d" % (index + 1), 10, INK)
+	var position: Vector3 = game.player.position
+	var mark: Vector2 = origin + (Vector2(position.x, position.z) / float(station.CELL) + Vector2(0.5, 0.5)) * cell_px
+	var forward: Vector3 = -game.player.basis.z
+	var turn := Transform2D(Vector2(forward.x, forward.z).angle() + PI * 0.5, mark)
+	var arrow := PackedVector2Array([turn * Vector2(0, -9), turn * Vector2(6, 6), turn * Vector2(0, 3), turn * Vector2(-6, 6)])
+	draw_colored_polygon(arrow, WHITE)
+	arrow.append(arrow[0])
+	draw_polyline(arrow, INK, 1.4, true)
+	write(Vector2(origin.x - 14, origin.y - 26), ("暮区" if focus == 1 else "晨区") + " · 全图", 18, tint)
+	if focus != game.phase:
+		write(Vector2(origin.x + 120, origin.y - 26), "（另一时态，你的位置是同坐标）", 12, DIM)
+	write(Vector2(origin.x + side - 210, origin.y - 26), "M 关闭 · Tab 切晨暮", 13, tint)
+	write(Vector2(origin.x - 14, origin.y + side + 34), "A 调查台  B 办公室  C 时钟实验室  D 生命维持  L 结算  R 中继  G 换相门  红＝已封闭断点", 12, DIM)
+
+
+func draw_dev_panel() -> void:
+	var story: int = game.STORY_ORDER.find(game.chapter) + 1
+	var answer := "—"
+	if game.chapter == 0:
+		answer = "选 1 设备 + 2 警报，Enter"
+	elif not game.solved:
+		answer = "选 %d" % (game.ANSWERS[game.chapter] + 1)
+	elif game.chapter == 2:
+		answer = "已核验：开关→接线→外发"
+	var lines := [
+		"第 %d 步 / 章节 %s  ·  断点阶段 S%d  ·  %s" % [story, game.chapter_title(), game.station.map_stage, "晨区" if game.phase == 0 else "暮区"],
+		"证据 %d/3  ·  追债人 %s  ·  无敌 %s" % [game.evidence.count(true), ("在场" if game.boss_live else "未部署"), ("开" if game.dev_god else "关")],
+		"本章答案：%s" % answer,
+		"F2 下一章   F3 传送(房间/门/断点)   F4 拿齐证据   F5 无敌",
+		"F6 召唤/撤回追债人   F7 直接过本章（第 05 章逐步推进）   F1 关",
+	]
+	draw_rect(Rect2(820, 120, 434, 24 + 20 * lines.size()), Color(0.22, 0.03, 0.07, 0.88))
+	draw_rect(Rect2(820, 120, 2, 24 + 20 * lines.size()), Color("ff315f"))
+	for index in range(lines.size()):
+		write(Vector2(834, 142 + 20 * index), lines[index], 12, WHITE if index < 3 else DIM)

@@ -51,8 +51,9 @@ func run() -> void:
 	game.boss_delay = 0.0
 	game.stunned = 0.0
 	game.charge_recovery = 5.0
-	game.boss.position = game.station.point(Vector2i(1,2))
-	game.player.position = game.station.point(Vector2i(1,3)) + Vector3.UP * 0.05
+	# 地图 v6：旧坐标 (1,2)/(1,3) 在新图里是墙，改用 A-01 正下方两格
+	game.boss.position = game.station.point(game.station.AUDIT + Vector2i(0,1))
+	game.player.position = game.station.point(game.station.AUDIT + Vector2i(0,2)) + Vector3.UP * 0.05
 	game.boss_route.clear()
 	game.set_mode("world")
 	before = game.boss.position
