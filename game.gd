@@ -5,6 +5,7 @@ const Station := preload("res://station.gd")
 const Interface := preload("res://interface.gd")
 const Profile := preload("res://profile.gd")
 const Exterior := preload("res://exterior.gd")
+const HunterVisual := preload("res://hunter_visual.gd")
 const CHAPTERS := ["01 / 同一扇门", "03 / 谁签了字", "05 / 站外回执", "02 / 先发生的事", "04 / 借出去的明天"]
 const NEXT_CHAPTER := [3, 4, -1, 1, 2]
 const RECORDS := [
@@ -33,6 +34,7 @@ var exterior: Node3D
 var boss: Node3D
 var boss_rig: Node3D
 var boss_eye: MeshInstance3D
+var boss_lamp: OmniLight3D
 var mode := "menu"
 var controls_return := "menu"
 var restart_return := "paused"
@@ -161,19 +163,12 @@ func build_player() -> void:
 func build_boss() -> void:
 	boss = Node3D.new()
 	add_child(boss)
-	boss_rig = Node3D.new()
+	boss_rig = HunterVisual.new()
 	boss.add_child(boss_rig)
-	var shell: Material = station.palette.frame
-	var armor: Material = station.palette.wall
-	station.box(boss_rig, Vector3(0, 1.50, 0), Vector3(0.66, 0.75, 0.43), armor)
-	station.box(boss_rig, Vector3(0, 2.03, 0), Vector3(0.44, 0.32, 0.36), shell)
-	boss_eye = station.box(boss_rig, Vector3(0, 2.04, -0.19), Vector3(0.37, 0.055, 0.04), station.palette.red)
-	for side in [-1, 1]:
-		station.box(boss_rig, Vector3(side * 0.45, 1.64, 0), Vector3(0.27, 0.28, 0.37), shell)
-		station.box(boss_rig, Vector3(side * 0.53, 1.23, 0), Vector3(0.16, 0.64, 0.20), armor)
-		station.box(boss_rig, Vector3(side * 0.20, 0.48, 0), Vector3(0.22, 1.03, 0.27), shell)
-		station.box(boss_rig, Vector3(side * 0.21, 0.83, -0.145), Vector3(0.12, 0.22, 0.04), station.palette.red)
+	boss_eye = boss_rig.status_marker
+	boss_eye.material_override = station.palette.red
 	var lamp := OmniLight3D.new()
+	boss_lamp = lamp
 	lamp.light_color = Color("ff2455")
 	lamp.light_energy = 1.55
 	lamp.omni_range = 4.0
@@ -183,6 +178,7 @@ func build_boss() -> void:
 
 
 func _process(delta: float) -> void:
+	boss_rig.animation.active = mode == "world" and boss_live and boss.visible
 	var opening := mode in ["menu", "intro"] or (mode == "controls" and controls_return == "menu") or (mode == "restart_confirm" and restart_return == "menu")
 	if opening:
 		update_opening(delta)
@@ -239,6 +235,7 @@ func _physics_process(delta: float) -> void:
 	if boss_live:
 		var previous_boss := boss.position
 		update_boss(delta, sprint)
+		boss_rig.update_motion(delta, boss.position.distance_to(previous_boss) / delta, stunned > 0.0 or boss_delay > 0.0 or charge_warning > 0.0)
 		sound.hunter_moved(previous_boss, boss.position, boss_live and boss_phase == phase and boss_delay <= 0.0 and stunned <= 0.0)
 	if upload > 0.0:
 		upload -= delta
@@ -375,6 +372,7 @@ func handle_action(action: String) -> void:
 
 
 func set_mode(next: String) -> void:
+	boss_rig.animation.active = next == "world" and boss_live and boss.visible
 	if mode == "audit" and next != "audit":
 		alignment_fields.clear()
 	if next != "world":
@@ -795,7 +793,7 @@ func update_boss(delta: float, sprint: bool) -> void:
 	var same_phase := boss_phase == phase
 	boss.visible = same_phase and boss_delay <= 0.8
 	boss_eye.material_override = station.palette.blue if stunned > 0.0 else station.palette.red
-	boss_rig.position.y = 0.05 * sin(time_in_lap * 14.0) if stunned <= 0.0 else 0.0
+	boss_lamp.light_color = Color("54c9ff") if stunned > 0.0 else Color("ff2455")
 	threat = 0.2 if not same_phase else clampf(1.1 - distance / 15.0, 0.14, 0.92)
 	if boss_delay > 0.0 or stunned > 0.0:
 		return
