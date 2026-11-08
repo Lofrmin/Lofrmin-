@@ -51,7 +51,7 @@ func spatial_trial(task: String) -> void:
 	else:
 		game.player.position = trial.sites[1].position + Vector3(-0.95, 0.05, 0)
 		press(KEY_E)
-		check(not trial.completed and trial.progress == 0, "wrong world switch cannot complete")
+		check(not trial.completed and trial.progress == (1 if task == "relay" else 0), "relay accepts any first column; clock requires first switch")
 		for i in range(trial.sites.size()):
 			game.player.position = trial.sites[i].position + Vector3(-0.95, 0.05, 0)
 			press(KEY_E)

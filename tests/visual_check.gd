@@ -58,6 +58,8 @@ func run() -> void:
 	await capture("desk-before")
 	game.mode = "audit"
 	game.handle_action("accept")
+	await capture("signature-preview")
+	game.handle_action("accept_commit")
 	await capture("desk-after")
 	game.reset_lap("审计匣保留证据；接案签字已复位。")
 	game.player.rotation.y = 0

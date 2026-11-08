@@ -169,11 +169,11 @@ func draw_settings() -> void:
 		code(Vector2(722,y+26),"%3d%%" % roundi(float(row[2])*100),17)
 		button(Rect2(812,y,72,38),"setting_"+row[0]+"_down","−",MINT)
 		button(Rect2(902,y,72,38),"setting_"+row[0]+"_up","+",MINT)
-	write(Vector2(280,505), "追债人数量", 18)
+	write(Vector2(280,505), "常规追债人数", 18)
 	for count in [1,2,3]:
 		button(Rect2(452+(count-1)*176,477,164,40),"setting_hunters_%d" % count,("[选中] " if game.options.hunter_count == count else "")+"%d 名" % count,MINT if game.options.hunter_count == count else DIM)
 	var active_count: Variant = game.get("lap_hunter_count")
-	write(Vector2(280,548), "本轮 %d 名 / 下轮 %d 名 · 安全位置不足时少部署" % [int(active_count) if active_count!=null else 1,game.options.hunter_count], 15, DIM)
+	write(Vector2(280,548), "本轮 %d / 下轮 %d · 电源柱与终局另有事件追兵" % [int(active_count) if active_count!=null else 1,game.options.hunter_count], 15, DIM)
 	var settings_notice: Variant = game.get("settings_notice")
 	write(Vector2(280,575), str(settings_notice) if settings_notice != null and not str(settings_notice).is_empty() else "设置独立保存，不会清除章节与证据。", 14, AMBER if settings_notice != null and not str(settings_notice).is_empty() else DIM)
 	button(Rect2(732,596,242,38),"settings_back","Esc / Enter  返回")
@@ -365,6 +365,15 @@ func draw_minimap() -> void:
 				code(center + Vector2(5, 3), str(game.station.GATES.find(tile) + 1), 10, tint)
 			elif not mark.is_empty():
 				code(center + Vector2(-3, 3), mark, 10, tint)
+	if focus == 1:
+		for marker in game.dusk_trials.map_objectives():
+			var center: Vector2 = projection * Vector2(marker.tile)
+			# Distant columns stay on the edge of the scrolling minimap.
+			center = Vector2(clampf(center.x, 45, 239), clampf(center.y, 81, 228))
+			var color := MINT if marker.active else AMBER
+			draw_circle(center, 6.0, INK, true, -1.0, true)
+			draw_circle(center, 5.0, color, marker.active, -1.0, true)
+			code(center + Vector2(7, 3), marker.label, 11, color)
 	var position: Vector3 = game.player.position
 	var player_mark := projection * (Vector2(position.x, position.z) / float(game.station.CELL))
 	var tip := player_mark + Vector2(0, -7)
@@ -485,10 +494,33 @@ func draw_evidence(accent: Color) -> void:
 			button(Rect2(406, 405 + index * 49, 739, 40), "choice_%d" % index, "%d    %s" % [index + 1, choices[index]], accent)
 	elif game.ready_to_send():
 		button(Rect2(406, 419, 350, 44), "send", "Enter  向站外发送完整账本", accent)
+	elif game.chapter == 1:
+		draw_authorization(accent)
 	else:
 		write(Vector2(407, 385), "先按左上角目标取证，再回这里提交推理。", 17, DIM)
-		if game.can_confirm_again():
-			button(Rect2(406, 419, 350, 44), "accept", "确认接案 · 签收复核 A-42", AMBER)
+
+
+func draw_authorization(accent: Color) -> void:
+	var fields: Array[String] = game.authorization_fields()
+	if fields.is_empty():
+		write(Vector2(407, 385), "A-42 流程档案尚未调出，请重新阅览调查台。", 17, DIM)
+		return
+	if game.signature_pending:
+		write(Vector2(406, 376), "A-42  /  提交复核回执", 21, AMBER)
+		write(Vector2(406, 413), "此操作将以接案调查员身份签收，并将回执送入执行队列。", 16)
+		write(Vector2(406, 442), "执行处理将关闭 B-17 现场核验窗口；阅览档案不需要签收。", 16, DIM)
+		button(Rect2(406, 481, 350, 41), "accept_commit", "签收并送执行", AMBER)
+		button(Rect2(777, 481, 368, 41), "accept_cancel", "返回阅览", accent)
+		return
+	write(Vector2(406, 376), "A-42  /  流程附栏", 19, WHITE)
+	for index in range(fields.size()):
+		write(Vector2(406, 408 + index * 28), fields[index], 16, DIM)
+	if game.can_confirm_again():
+		button(Rect2(406, 488, 350, 41), "accept", "办理复核签收…", AMBER)
+		button(Rect2(777, 488, 368, 41), "resume", "离开工作台", accent)
+	elif game.case_accepted:
+		write(Vector2(406, 508), "复核回执已送出，可返回现场核对处理结果。", 17, AMBER)
+		write(Vector2(406, 539), "R 返回本轮开始；已归档的记录仍保留。", 16, DIM)
 
 
 func draw_alignment(accent: Color) -> void:
@@ -510,24 +542,28 @@ func draw_alignment(accent: Color) -> void:
 
 
 func draw_timeline(accent: Color) -> void:
-	write(Vector2(406,376),"共同起点是脉冲 0 秒。先换算，再依先后点选。",17,WHITE)
-	write(Vector2(406,407),"暮区5000秒÷1000→晨区?秒｜↑扣款 ↓立案",15,DIM)
+	write(Vector2(406,376),"先换成同一单位，再按发生先后选事件卡。",18,WHITE)
+	write(Vector2(406,407),"换算栏：5000 暮秒 =",16,DIM)
+	write(Vector2(778,407),"顺序栏：第一次选中为先，第二次为后",15,DIM)
 	draw_rect(Rect2(406,420,105,38),alpha(accent,0.09))
 	draw_rect(Rect2(406,420,105,38),alpha(accent,0.58),false,1.0)
 	code(Vector2(421,447),game.timeline_seconds if not game.timeline_seconds.is_empty() else "___",20,accent)
+	write(Vector2(455,478),"晨秒",15,DIM)
+	write(Vector2(406,515),"数字键输入",13,DIM)
+	write(Vector2(406,536),"↑/↓ 选卡",13,DIM)
 	for digit in range(1,10):
 		var x := 535 + ((digit - 1) % 3) * 48
 		var y := 422 + ((digit - 1) / 3) * 35
 		button(Rect2(x,y,42,29),"timeline_digit_%d" % digit,str(digit),accent)
 	button(Rect2(583,527,42,29),"timeline_digit_0","0",accent)
 	button(Rect2(631,527,90,29),"timeline_back","退格",DIM)
-	for id in ["debit","filing"]:
+	for id in ["filing","debit"]:
 		var rank: int = game.timeline_order.find(id)
-		var y := 426.0 if id == "debit" else 480.0
-		var text := "暮区扣款名单5000s" if id == "debit" else "晨区寻人立案6s"
-		var label := "%d｜%s" % [rank + 1,text] if rank >= 0 else "点选排序｜%s" % text
+		var y := 426.0 if id == "filing" else 480.0
+		var text := "↓ 扣款名单 · 5000暮秒" if id == "debit" else "↑ 寻人立案 · 6晨秒"
+		var label := "%d｜%s" % [rank + 1,text] if rank >= 0 else "待排｜%s" % text
 		button(Rect2(778,y,365,43),"timeline_pick_"+id,label,accent if rank >= 0 else DIM)
-	button(Rect2(778,532,227,33),"timeline_submit","Enter  核验换算与顺序",accent)
+	button(Rect2(778,532,227,33),"timeline_submit","Enter  核验推理",accent)
 	button(Rect2(1014,532,129,33),"timeline_clear","清空本题",DIM)
 
 
@@ -598,7 +634,9 @@ func draw_big_map() -> void:
 		var at: Vector2 = origin + (Vector2(station.GATES[index]) + Vector2(0.5, 0.5)) * cell_px
 		draw_rect(Rect2(at - Vector2(8, 8), Vector2(16, 16)), WHITE)
 		code(at + Vector2(-8, 4), "G%d" % (index + 1), 10, INK)
-	var hunter_positions: Array[Vector3] = game.extra_hunter_positions() if focus == 1 else []
+	var hunter_positions: Array[Vector3] = []
+	if focus == 1:
+		hunter_positions = game.extra_hunter_positions()
 	if game.boss_live and game.boss_phase == focus: hunter_positions.append(game.boss.position)
 	for hunter_position in hunter_positions:
 		var hunter_mark := origin + (Vector2(hunter_position.x, hunter_position.z) / float(station.CELL) + Vector2(0.5, 0.5)) * cell_px

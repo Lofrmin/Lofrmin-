@@ -24,6 +24,22 @@ func run() -> void:
 		if game.chapter != 1:
 			failed = true
 			printerr("FAIL: timeline mouse submission")
+		game.interact()
+		await capture("authorization-fields-%d" % resolution.x)
+		await click("accept")
+		await capture("signature-preview-%d" % resolution.x)
+		if game.case_accepted or not game.signature_pending:
+			failed = true
+			printerr("FAIL: signature preview must not execute")
+		await click("accept_cancel")
+		if game.case_accepted or game.signature_pending:
+			failed = true
+			printerr("FAIL: signature cancel")
+		await click("accept")
+		await click("accept_commit")
+		if not game.case_accepted:
+			failed = true
+			printerr("FAIL: signature mouse confirmation")
 		if resolution.x == 1280:
 			game.dev_mode = true
 			await capture("dev-timeline-answer")

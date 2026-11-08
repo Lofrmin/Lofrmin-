@@ -25,7 +25,19 @@ func run() -> void:
 	game.update_witness()
 	check(game.audit_status_text().contains("待复核"), "before signing")
 	game.set_mode("audit")
+	game.handle_action("accept_commit")
+	check(not game.case_accepted, "signature cannot commit without explicit preview")
 	game.handle_action("accept")
+	check(game.signature_pending and not game.case_accepted, "opening signature explains consequence without signing")
+	check(is_zero_approx(game.station.witnesses[1].rotation.x), "preview keeps witness alive")
+	game.handle_action("accept_cancel")
+	check(not game.signature_pending and not game.case_accepted, "cancel returns to unsigned reading")
+	game.handle_action("accept")
+	game.set_mode("world")
+	check(not game.signature_pending and not game.case_accepted, "leaving desk clears pending signature")
+	game.set_mode("audit")
+	game.handle_action("accept")
+	game.handle_action("accept_commit")
 	check(game.case_accepted and game.audit_status_text().contains("已复核"), "after signing")
 	check(game.station.audit_labels[0].text == game.audit_status_text(), "scene screen matches rules")
 	check(not is_zero_approx(game.station.witnesses[1].rotation.x), "signing changes witness outcome")
@@ -33,6 +45,19 @@ func run() -> void:
 	check(not game.case_accepted and game.audit_status_text().contains("待复核"), "reset clears signature")
 	check(game.evidence == [true, true, false], "banked evidence survives")
 	check(is_zero_approx(game.station.witnesses[1].rotation.x), "unsigned witness remains alive")
+	game.evidence = [false,false,false]
+	game.interact()
+	check(game.mode == "audit" and game.evidence[1] and not game.case_accepted, "reading A-42 archives process without signature")
+	check(game.authorization_fields().size() == 3 and game.authorization_fields()[2].contains("关闭"), "discoverable process discloses field-check cost")
+	check(not game.objective().contains("暂缓") and not game.objective().contains("未签"), "objective does not give away the signature strategy")
+	game.inspect_relay()
+	game.phase = 1
+	game.inspect_office()
+	check(game.evidence[2] and not game.case_accepted, "unsigned field check collects live testimony")
+	game.phase = 0
+	game.interact()
+	check(game.evidence == [true,true,true] and not game.unbanked, "testimony can be archived without signature")
+	game.reset_lap("isolate authorization field-check state")
 	game.chapter = 0
 	game.evidence = [false, false, false]
 	game.interact()
@@ -127,7 +152,7 @@ func run() -> void:
 	game.phase = 0
 	game.set_mode("audit")
 	game.begin_upload()
-	check(game.upload == 6.0, "final upload remains six seconds")
+	check(game.upload == 30.0, "final upload lasts thirty seconds")
 	game.free()
 	await process_frame
 	print("CORE_LOOP_TEST: %d checks / %d failures" % [checks, failures.size()])
