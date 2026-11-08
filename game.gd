@@ -6,6 +6,7 @@ const Interface := preload("res://interface.gd")
 const Profile := preload("res://profile.gd")
 const Exterior := preload("res://exterior.gd")
 const HunterVisual := preload("res://hunter_visual.gd")
+const Prologue := preload("res://prologue.gd")
 const HunterAgent := preload("res://hunter_agent.gd")
 const EXTRA_HUNTER_COUNT := 2
 const HUNTER_SPAWN_MIN := 8.0
@@ -112,6 +113,7 @@ var tactic := "patrol"
 var tactic_gate := 0
 var tactic_source := "rules"
 var sound: Node
+var prologue: CanvasLayer
 var optics: ShaderMaterial
 
 
@@ -245,6 +247,22 @@ func begin_intro() -> void:
 	set_mode("intro")
 
 
+func begin_prologue() -> void:
+	if prologue == null:
+		prologue = Prologue.new()
+		add_child(prologue)
+		prologue.finished.connect(finish_prologue)
+	set_mode("cinematic")
+	if not prologue.play():
+		# A missing media file must never block a new investigation.
+		begin_intro()
+
+
+func finish_prologue() -> void:
+	if mode == "cinematic":
+		begin_intro()
+
+
 func advance_intro() -> void:
 	if mode != "intro": return
 	if intro_page < 2:
@@ -303,6 +321,11 @@ func _physics_process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if mode == "cinematic":
+		if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode in [KEY_SPACE, KEY_ESCAPE]:
+			prologue.finish()
+			get_viewport().set_input_as_handled()
+		return
 	if event is InputEventMouseMotion and mode == "world" and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		player.rotate_y(-event.relative.x * 0.00235)
 		camera.rotation.x = clampf(camera.rotation.x - event.relative.y * 0.00235, -1.35, 1.35)
@@ -416,7 +439,7 @@ func handle_action(action: String) -> void:
 				set_mode("restart_confirm")
 			else:
 				fresh_investigation = true
-				begin_intro()
+				begin_prologue()
 		"intro_next": advance_intro()
 		"controls":
 			if mode in ["menu", "world", "paused"]:
@@ -456,7 +479,7 @@ func handle_action(action: String) -> void:
 				tactic = "patrol"
 				tactic_source = "rules"
 				reset_lap("新调查已建立。前往晨区 B-17。")
-				if restart_return == "menu": begin_intro()
+				begin_prologue()
 		"quit": get_tree().quit()
 		_:
 			if action.begins_with("timeline_digit_"):
@@ -472,6 +495,9 @@ func handle_action(action: String) -> void:
 
 
 func set_mode(next: String) -> void:
+	if mode == "cinematic" and next != "cinematic" and prologue != null:
+		prologue.stop()
+	get_viewport().disable_3d = next == "cinematic"
 	boss_rig.animation.active = next == "world" and boss_live and boss.visible
 	for hunter in extra_hunters:
 		hunter.rig.animation.active = next == "world" and hunter.live and hunter.visible

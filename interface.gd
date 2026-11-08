@@ -1,5 +1,6 @@
 extends Control
 
+const MENU_COVER := preload("res://assets/ui/menu_cover.png")
 const MINT := Color("a7dcd0")
 const AMBER := Color("edbe87")
 const WHITE := Color("eeeee7")
@@ -35,8 +36,11 @@ func _draw() -> void:
 		return
 	hit_regions.clear()
 	pointer = get_global_mouse_position() * Vector2(1280, 720) / size
+	if game.mode in ["menu", "intro"] or (game.mode == "controls" and game.controls_return == "menu") or (game.mode == "restart_confirm" and game.restart_return == "menu"):
+		draw_menu_cover()
 	draw_set_transform(Vector2.ZERO, 0.0, size / Vector2(1280, 720))
 	match game.mode:
+		"cinematic": pass
 		"menu": draw_menu()
 		"controls": draw_controls()
 		"intro": draw_intro()
@@ -44,6 +48,15 @@ func _draw() -> void:
 		"ending": draw_ending()
 		"restart_confirm": draw_restart()
 		_: draw_hud()
+
+
+func draw_menu_cover() -> void:
+	# Crop from the center to fill the window without stretching the supplied art.
+	var image_size := MENU_COVER.get_size()
+	var scale_factor := maxf(size.x / image_size.x, size.y / image_size.y)
+	var source_size := size / scale_factor
+	var source := Rect2((image_size - source_size) * 0.5, source_size)
+	draw_texture_rect_region(MENU_COVER, Rect2(Vector2.ZERO, size), source)
 
 
 func write(at: Vector2, message: String, font_size: int, color: Color = WHITE) -> void:
@@ -97,7 +110,11 @@ func button(rect: Rect2, action: String, caption: String, color: Color = MINT) -
 func draw_menu() -> void:
 	var shade := Color(0.008, 0.019, 0.027)
 	var curtain := PackedVector2Array([Vector2.ZERO, Vector2(720,0), Vector2(720,720), Vector2(0,720)])
-	draw_polygon(curtain, PackedColorArray([alpha(shade,0.96), alpha(shade,0.15), alpha(shade,0.15), alpha(shade,0.96)]))
+	draw_polygon(curtain, PackedColorArray([alpha(shade,0.45), alpha(shade,0.0), alpha(shade,0.0), alpha(shade,0.45)]))
+	var top := PackedVector2Array([Vector2.ZERO, Vector2(1280,0), Vector2(1280,105), Vector2(0,105)])
+	draw_polygon(top, PackedColorArray([alpha(shade,0.62), alpha(shade,0.62), alpha(shade,0.0), alpha(shade,0.0)]))
+	var footer := PackedVector2Array([Vector2(0,603), Vector2(1280,603), Vector2(1280,720), Vector2(0,720)])
+	draw_polygon(footer, PackedColorArray([alpha(shade,0.0), alpha(shade,0.0), alpha(shade,0.84), alpha(shade,0.84)]))
 	code(Vector2(64,63), "C O R R I D O R   /   CASE ARCHIVE", 13)
 	code(Vector2(1065,63), "PANDA JAM / CYCLE", 11, DIM)
 	write(Vector2(60,171), "回廊", 80)
