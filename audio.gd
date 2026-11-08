@@ -3,6 +3,7 @@ extends Node
 const CHASE_SILENT_DB := -48.0
 const CHASE_LOOP_SOURCE: AudioStreamWAV = preload("res://assets/audio/chase_loop.wav")
 const EXPLORATION_SOURCE := preload("res://assets/audio/exploration_loop.ogg")
+const PURSUIT_SOURCE := preload("res://assets/audio/pursuit_score.ogg")
 const CLIPS := {
 	"step_a": preload("res://assets/audio/step_a.wav"),
 	"step_b": preload("res://assets/audio/step_b.wav"),
@@ -26,6 +27,7 @@ var hunter_distance := 0.0
 var alternate := false
 var alert_layers: Dictionary = {}
 var music: AudioStreamPlayer
+var tension_music: AudioStreamPlayer
 const BUS_GAIN_DB := {"CorrMaster":0.0,"CorrEffects":6.0,"CorrAlerts":6.0,"CorrAmbience":8.0}
 
 func ensure_audio_buses() -> void:
@@ -58,6 +60,12 @@ func setup(hunter: Node3D) -> void:
 	music.bus="CorrAmbience"
 	music.volume_db=-48.0
 	add_child(music)
+	tension_music=AudioStreamPlayer.new()
+	tension_music.stream=PURSUIT_SOURCE.duplicate()
+	tension_music.stream.loop=true
+	tension_music.bus="CorrAmbience"
+	tension_music.volume_db=CHASE_SILENT_DB
+	add_child(tension_music)
 	chase_loop = CHASE_LOOP_SOURCE.duplicate() as AudioStreamWAV
 	chase_loop.loop_mode = AudioStreamWAV.LOOP_FORWARD
 	chase_loop.loop_end = chase_loop.data.size() / 2
@@ -106,6 +114,10 @@ func cue(key: String) -> void:
 	cues[key].play()
 	if alert_layers.has(key): alert_layers[key].play()
 
+func stop_cue(key: String) -> void:
+	cues[key].stop()
+	if alert_layers.has(key): alert_layers[key].stop()
+
 func update_music(delta: float, active: bool, danger: bool) -> void:
 	if not active:
 		music.stop()
@@ -116,17 +128,19 @@ func update_music(delta: float, active: bool, danger: bool) -> void:
 	music.volume_db=move_toward(music.volume_db,target,maxf(delta,0.0)*12.0)
 
 func update_chase(delta: float, threat: float, active: bool) -> void:
-	if active:
-		if not chase.playing:
-			chase.volume_db = CHASE_SILENT_DB
-			chase.play()
-		var target_db := lerpf(-22.0, -16.0, clampf(threat, 0.0, 1.0))
-		chase.volume_db = move_toward(chase.volume_db, target_db, maxf(0.0, delta) * 12.0)
-	elif chase.playing:
-		chase.volume_db = move_toward(chase.volume_db, CHASE_SILENT_DB, maxf(0.0, delta) * 12.0)
-		if chase.volume_db <= CHASE_SILENT_DB + 0.001:
-			chase.stop()
-			chase.volume_db = CHASE_SILENT_DB
+	for voice in [chase,tension_music]:
+		if active:
+			if not voice.playing:
+				voice.volume_db=CHASE_SILENT_DB
+				voice.play()
+			var upper := -14.0 if voice==tension_music else -16.0
+			var target_db := lerpf(-22.0,upper,clampf(threat,0.0,1.0))
+			voice.volume_db=move_toward(voice.volume_db,target_db,maxf(delta,0.0)*12.0)
+		elif voice.playing:
+			voice.volume_db=move_toward(voice.volume_db,CHASE_SILENT_DB,maxf(delta,0.0)*12.0)
+			if voice.volume_db<=CHASE_SILENT_DB+0.001:
+				voice.stop()
+				voice.volume_db=CHASE_SILENT_DB
 
 func player_moved(before: Vector3, after: Vector3, grounded: bool, sprint: bool) -> void:
 	var distance := Vector2(after.x - before.x, after.z - before.z).length()
@@ -156,6 +170,8 @@ func hunter_moved(before: Vector3, after: Vector3, audible: bool) -> void:
 		hunter_step.play()
 
 func quiet() -> void:
+	tension_music.stop()
+	tension_music.volume_db=CHASE_SILENT_DB
 	music.stop()
 	music.volume_db=-48.0
 	player_distance = 0.0

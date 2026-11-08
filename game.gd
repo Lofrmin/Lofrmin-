@@ -1901,7 +1901,7 @@ func pulse() -> void:
 		return
 	# One area pulse, one charge, even when several visible hunters are affected.
 	charges -= 1
-	sound.cues.warning.stop()
+	sound.stop_cue("warning")
 	sound.cue("success")
 	say("%d 名追债人失相。现在走。" % hits)
 
