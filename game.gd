@@ -6,9 +6,14 @@ const Interface := preload("res://interface.gd")
 const Profile := preload("res://profile.gd")
 const Exterior := preload("res://exterior.gd")
 const HunterVisual := preload("res://hunter_visual.gd")
+const Preferences := preload("res://preferences.gd")
+var options := Preferences.new()
+var settings_return := "menu"
+var settings_notice := ""
+var lap_hunter_count := 1
+var hunter_intro_seen := false
 const Prologue := preload("res://prologue.gd")
 const HunterAgent := preload("res://hunter_agent.gd")
-const EXTRA_HUNTER_COUNT := 2
 const HUNTER_SPAWN_MIN := 8.0
 const HUNTER_SPAWN_MAX := 16.0
 const HUNTER_ROUTE_BUDGET := 24.0
@@ -32,9 +37,9 @@ const CHAPTERS := ["01 / 同一扇门", "03 / 谁签了字", "05 / 站外回执"
 const NEXT_CHAPTER := [3, 4, -1, 1, 2]
 const RECORDS := [
 	["晨区 B-17  门禁 V-17 / 警报 #043 / 09:00:01", "暮区 B-17  门禁 V-17 / 警报 #043 / 16:42:26", "遗书：下次接到任务时，先别按确认。"],
-	["晨区中继  管理层受益账户 / 授权 A-42", "调查台  确认接案 → 第三方复核 / 授权 A-42", "林岑：用事故前的求救线路。调度台网络归他们管。"],
+	["晨区 R-03  批准：管理层 / 受益：管理层 / A-42", "A-42 流程栏  接案确认 → 第三方复核 → 执行队列", "暮区 B-17  林岑在场证词 / 取证时 A-42 尚未复核"],
 	["晨区 R-03  开关标记 E-7 / 线路图到此中断", "暮区 R-03  墙内线缆 E-7 / 指向站外中继", "审计匣  死亡凭证与扣款授权已核验。"],
-	["晨区 C-04  寻人立案 / 同步脉冲后 6 秒", "暮区 C-04  扣款名单预登记 / 同步脉冲后 5000 秒", "同步规程  脉冲时两边计时归零 / 晨暮 1:1000"],
+	["晨区 C-04  寻人立案 / 脉冲后 6 晨秒", "暮区 C-04  扣款名单预登记 / 脉冲后 5000 暮秒", "同步规程  同一脉冲两表归零 / 1 晨秒 = 1000 暮秒"],
 	["暮区 D-09  林岑寿命账户 / X-71 / -38 年", "晨区 L-06  管理层受益账户 / X-71 / +38 年", "暮区 L-06  总账存于站外镜像 / 已交割历史不会复位"],
 ]
 const QUESTIONS := ["两次记录如何对齐？", "谁批准拨付，谁触发了执行？", "哪条线路能把账本送到站外？", "换成晨区时间，哪件事先发生？", "复位之后，X-71 的 38 年去哪了？"]
@@ -84,6 +89,7 @@ var evidence: Array = [false, false, false]
 var alignment_fields: Array[String] = []
 var timeline_seconds := ""
 var timeline_order: Array[String] = []
+var signature_pending := false
 var dusk_grace := 0.0
 var dusk_grace_used := false
 var unbanked := false
@@ -105,11 +111,29 @@ var charge_recovery := 0.0
 var path_timer := 0.0
 var tracking_time := 0.0
 var patrol_index := 0
+# 阶段 A：卡死诊断与有界恢复（保留调试观察，不是 Release F1 入口）
+var boss_stall_time := 0.0          # 连续无进展时长（秒）
+const BOSS_STALL_REPLAN := 1.2      # 持续 1.2s 无进展强制重规划
+const BOSS_RECOVER_STEP := 0.18     # 起点重叠时单次推出步长（米）
+const BOSS_RECOVER_MAX := 0.72      # 累计最大推出距离（米），超过放弃避免传送
 var boss_route: Array[Vector2i] = []
 var last_known: Vector2i = Station.LAB
 var cross_gate: Vector2i = Station.GATES[0]
 var gate_observed := [0, 0]   # 后端只认两扇门：北侧门记 0/1，南侧门按东西并入
 var sprint_observed := 0
+# 阶段 B：仅本轮运行时的体力，不写入 profile/数据库；重启与新轮回恢复满值
+const STAMINA_MAX := 100.0
+const STAMINA_DRAIN_RATE := 25.0
+const STAMINA_REGEN_RATE := 100.0 / 6.0
+const STAMINA_REGEN_DELAY := 1.25
+const STAMINA_RESTART_THRESHOLD := 25.0
+const PLAYER_WALK_SPEED := 4.45
+const PLAYER_SPRINT_SPEED := 6.25
+const BOSS_CHASE_SPEED := 5.2  # 候选实测值：使耗尽后的步行有压力；速度完整记录于交付参数表
+var stamina := STAMINA_MAX
+var stamina_regen_wait := 0.0
+var stamina_exhausted := false
+var actual_sprinting := false  # 唯一供脚步/敌人听觉/观测使用的有效冲刺状态
 var tactic := "patrol"
 var tactic_gate := 0
 var tactic_source := "rules"
@@ -120,6 +144,8 @@ var optics: ShaderMaterial
 
 
 func _ready() -> void:
+	options.load_settings()
+	lap_hunter_count = options.hunter_count
 	var env_node := WorldEnvironment.new()
 	var env := Environment.new()
 	var sky_material := ShaderMaterial.new()
@@ -176,6 +202,7 @@ func build_audio() -> void:
 	sound = Sound.new()
 	add_child(sound)
 	sound.setup(boss)
+	sound.set_audio_levels(options.master_volume, options.effects_volume, options.alert_volume, options.ambience_volume)
 
 
 func build_player() -> void:
@@ -217,6 +244,7 @@ func build_boss() -> void:
 
 
 func _process(delta: float) -> void:
+	sound.update_music(delta,mode in ["menu","intro","world"],mode=="world" and (threat>0.35 or any_hunter_chasing()))
 	boss_rig.animation.active = mode == "world" and boss_live and boss.visible
 	for hunter in extra_hunters:
 		hunter.rig.animation.active = mode == "world" and hunter.live and hunter.visible
@@ -229,6 +257,7 @@ func _process(delta: float) -> void:
 		note_timer -= delta
 	if mode == "world":
 		station.animate_instruments(time_in_lap)
+		station.animate_relay(delta)
 	optics.set_shader_parameter("transition", clampf((shift_cooldown - 1.02) * 3.0, 0.0, 1.0))
 	optics.set_shader_parameter("defocus", 1.0 if mode in ["audit", "keypad", "paused", "restart_confirm", "controls"] else 0.0)
 	interface.queue_redraw()
@@ -253,6 +282,8 @@ func begin_prologue() -> void:
 	if prologue == null:
 		prologue = Prologue.new()
 		add_child(prologue)
+		prologue.video.bus = "CorrAmbience"
+		prologue.video.volume_db = -8.0
 		prologue.finished.connect(finish_prologue)
 	set_mode("cinematic")
 	if not prologue.play():
@@ -273,6 +304,8 @@ func begin_epilogue() -> void:
 		epilogue.stream_path = "res://assets/cinematics/epilogue.ogv"
 		epilogue.skip_caption = "Space / Esc  跳过结尾动画"
 		add_child(epilogue)
+		epilogue.video.bus = "CorrAmbience"
+		epilogue.video.volume_db = -8.0
 		epilogue.finished.connect(finish_epilogue)
 	set_mode("epilogue")
 	if not epilogue.play():
@@ -315,30 +348,38 @@ func _physics_process(delta: float) -> void:
 	shift_cooldown = maxf(0.0, shift_cooldown - delta)
 	gate_lock = maxf(0.0, gate_lock - delta)
 	update_field_task(delta)
+	if mode != "world": return
 	var move := Vector2(float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A)), float(Input.is_physical_key_pressed(KEY_S)) - float(Input.is_physical_key_pressed(KEY_W)))
 	var direction := player.basis * Vector3(move.x, 0, move.y).normalized()
-	var sprint := Input.is_physical_key_pressed(KEY_SHIFT) and move.length_squared() > 0
-	var speed := 6.25 if sprint else 4.45
+	var shift_held := Input.is_physical_key_pressed(KEY_SHIFT)
+	var wants_sprint := shift_held and move.length_squared() > 0
+	# 耗尽后必须松开 Shift 且恢复至 25%，禁止长按/连点在零附近闪烁冲刺。
+	var sprint_intent := wants_sprint and not stamina_exhausted and stamina > 0.00001
+	var speed := PLAYER_SPRINT_SPEED if sprint_intent else PLAYER_WALK_SPEED
 	player.velocity = Vector3(direction.x * speed, -6.0, direction.z * speed)
 	var previous_player := player.position
 	player.move_and_slide()
-	if dusk_trials.update(delta, player.position, sprint, phase):
+	# 有效冲刺 = Shift + 有移动意图 + 真实地面位移；顶墙/原地按 Shift 不扣体力、不传奔跑听觉。
+	var ground_distance := Vector2(player.position.x - previous_player.x, player.position.z - previous_player.z).length()
+	var moved := player.is_on_floor() and move.length_squared() > 0 and ground_distance > 0.001
+	apply_stamina_tick(delta, shift_held, moved)
+	sound.player_moved(previous_player, player.position, player.is_on_floor(), actual_sprinting)
+	if dusk_trials.update(delta, player.position, actual_sprinting, phase):
 		sound.cue("success")
 		say("场地操作已通过。返回原终端按 E 取证。")
-	sound.player_moved(previous_player, player.position, player.is_on_floor(), sprint)
 	if player.position.y < -3.0:
 		reset_lap("地板重力异常。审计匣已复原。")
 		return
-	if phase == 0:
+	if phase == 0 and upload <= 0.0:
 		stop_dusk_chase()
 	station.laser_grid.update(delta, phase, any_hunter_chasing(), player.position, boss.position, extra_hunter_positions())
 	var lap_before := laps
 	var previous_boss := boss.position
 	if boss_live:
-		update_boss(delta, sprint)
+		update_boss(delta, actual_sprinting)
 		boss_rig.update_motion(delta, boss.position.distance_to(previous_boss) / maxf(delta, 0.001), stunned > 0.0 or boss_delay > 0.0 or charge_warning > 0.0)
 	if laps != lap_before: return
-	update_extra_hunters(delta, sprint)
+	update_extra_hunters(delta, actual_sprinting)
 	if laps != lap_before: return
 	refresh_hunter_threat()
 	var nearest := nearest_hunter()
@@ -350,13 +391,25 @@ func _physics_process(delta: float) -> void:
 	sound.update_chase(delta, threat, any_hunter_chasing(true))
 	if upload > 0.0:
 		upload -= delta
+		# P1：上传中持续刷新中继面板倒计时
+		for rig in station.relay_rigs:
+			var lbl: Label3D = rig.status_label
+			lbl.text = "TX %.1fs" % maxf(upload, 0.0)
 		if upload <= 0.0 and mode == "world" and patched:
+			stop_dusk_chase()
 			cleared = true
 			store_progress()
 			begin_epilogue()
+			sync_relay_visual()
 
 
 func _input(event: InputEvent) -> void:
+	if mode == "hunter_intro":
+		if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode in [KEY_ENTER,KEY_SPACE,KEY_ESCAPE]:
+			acknowledge_hunters()
+		elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			if interface.button_at(event.position) == "ack_hunters": acknowledge_hunters()
+		return
 	if mode in ["cinematic", "epilogue"]:
 		if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode in [KEY_SPACE, KEY_ESCAPE]:
 			if mode == "cinematic": prologue.finish()
@@ -379,6 +432,9 @@ func _input(event: InputEvent) -> void:
 					finish_field_task()
 				return
 		if event.physical_keycode == KEY_ESCAPE:
+			if mode == "settings":
+				handle_action("settings_back")
+				return
 			if mode == "world" and big_map:
 				big_map = false
 				return
@@ -395,6 +451,8 @@ func _input(event: InputEvent) -> void:
 			handle_action("controls")
 			return
 		match mode:
+			"settings":
+				if event.physical_keycode == KEY_ENTER: handle_action("settings_back")
 			"menu":
 				if event.physical_keycode == KEY_ENTER:
 					handle_action("continue" if has_progress() else "new_case")
@@ -429,9 +487,9 @@ func _input(event: InputEvent) -> void:
 					elif event.physical_keycode == KEY_ENTER:
 						submit_timeline()
 					elif event.physical_keycode == KEY_UP:
-						pick_timeline("debit")
-					elif event.physical_keycode == KEY_DOWN:
 						pick_timeline("filing")
+					elif event.physical_keycode == KEY_DOWN:
+						pick_timeline("debit")
 				else:
 					if event.physical_keycode in [KEY_1, KEY_2, KEY_3] and mode == "audit" and puzzle_available():
 						if chapter == 0:
@@ -464,7 +522,28 @@ func _input(event: InputEvent) -> void:
 
 
 func handle_action(action: String) -> void:
+	if action.begins_with("setting_"):
+		if mode != "settings": return
+		var field := action.get_slice("_", 1)
+		if field == "hunters":
+			options.hunter_count = clampi(int(action.get_slice("_",2)),1,3)
+		elif field in ["master","effects","alert","ambience"]:
+			var property := field + "_volume"
+			var change := 0.1 if action.get_slice("_",2) == "up" else -0.1
+			options.set(property,clampf(float(options.get(property))+change,0.0,1.0))
+		else: return
+		sound.set_audio_levels(options.master_volume,options.effects_volume,options.alert_volume,options.ambience_volume)
+		settings_notice = "已保存 · 人数从下一轮开始生效" if options.save_settings() == OK else "设置写入失败：当前会话有效，请检查目录权限"
+		return
 	match action:
+		"settings":
+			if mode not in ["menu","paused"]: return
+			settings_return = mode
+			settings_notice = ""
+			set_mode("settings")
+		"settings_back":
+			if mode == "settings": set_mode(settings_return)
+		"ack_hunters": acknowledge_hunters()
 		"start":
 			if mode == "intro": start_game()
 		"continue":
@@ -477,6 +556,7 @@ func handle_action(action: String) -> void:
 			else:
 				fresh_investigation = true
 				echo_run = false
+				hunter_intro_seen = false
 				begin_prologue()
 		"intro_next": advance_intro()
 		"controls":
@@ -496,10 +576,18 @@ func handle_action(action: String) -> void:
 				timeline_order.clear()
 		"accept":
 			if can_confirm_again():
+				signature_pending = true
+				interface.queue_redraw()
+		"accept_cancel":
+			if mode == "audit":
+				signature_pending = false
+				interface.queue_redraw()
+		"accept_commit":
+			if signature_pending and can_confirm_again():
 				case_accepted = true
 				update_witness()
 				set_mode("world")
-				say("已复核 A-42。按 R 重新进入本轮，或去暮区查看执行结果。")
+				say("A-42 复核回执已送入执行队列。可去暮区核对回执；R 返回本轮开始。")
 		"loop": begin_echo_case()
 		"replay_ending":
 			if mode == "ending": begin_epilogue()
@@ -509,6 +597,7 @@ func handle_action(action: String) -> void:
 		"cancel_restart": set_mode(restart_return)
 		"restart_case":
 			if mode == "restart_confirm":
+				hunter_intro_seen = false
 				fresh_investigation = true
 				echo_run = false
 				chapter = 0
@@ -545,6 +634,7 @@ func set_mode(next: String) -> void:
 	for hunter in extra_hunters:
 		hunter.rig.animation.active = next == "world" and hunter.live and hunter.visible
 	if mode == "audit" and next != "audit":
+		signature_pending = false
 		alignment_fields.clear()
 		timeline_seconds = ""
 		timeline_order.clear()
@@ -557,6 +647,7 @@ func set_mode(next: String) -> void:
 
 
 func start_game() -> void:
+	lap_hunter_count = options.hunter_count
 	exterior.finish()
 	camera.make_current()
 	spawn_at_desk()
@@ -587,13 +678,20 @@ func update_witness() -> void:
 		trials_chapter = chapter
 	station.update_witness(chapter, evidence[0], case_accepted)
 	station.update_audit_status(audit_status_text())
+	sync_relay_visual()
+
+
+# P1：同步 R-03 / E-7 中继装饰节点的视觉，与 game.relay_status 阶段一致
+func sync_relay_visual() -> void:
+	if is_instance_valid(station) and station.has_method("update_relay_state"):
+		station.update_relay_state(solved, armed, patched, upload, cleared)
 
 
 func audit_status_text() -> String:
 	if cleared:
 		return "站外回执 / 已收讫\n审计匣：记录保留"
 	if chapter == 1:
-		return "A-42 / 已复核\n执行已触发 · R 返回确认前" if case_accepted else "A-42 / 待复核\n这一次，可以暂缓签字"
+		return "A-42 / 已复核\n回执已提交执行队列" if case_accepted else "A-42 / 待复核\n查看档案不产生签收回执"
 	if chapter in [4, 2]:
 		return "A-42 / 授权已核验\n审计匣：记录保留"
 	return "任务 / 已签收\n前往 B-17 核对记录" if case_accepted else "任务 / 待签收\n寻找失联同事 林岑"
@@ -601,10 +699,22 @@ func audit_status_text() -> String:
 
 func audit_reflection() -> String:
 	if chapter == 1:
-		return "同一个签字，暮区仍有人付出代价。按 R 返回确认前。" if case_accepted else "桌上的授权没有变。这次，先去暮区看看未签字的结果。"
+		return "本轮签收已送执行；R 可返回本轮开始，已归档证据保留。" if case_accepted else "阅览与归档不产生复核回执。签收状态以本轮为准。"
+	if chapter == 3:
+		return "使用同一脉冲起点，将两份记录统一为晨秒再比较。"
 	if chapter in [4, 2]:
 		return "站内可以复位；已经交割的账目，却留在站外。"
 	return "把两份记录带回来。审计匣会保留你已经核验的证据。"
+
+
+func authorization_fields() -> Array[String]:
+	if chapter != 1 or not evidence[1]:
+		return []
+	return [
+		"复核岗位：接案调查员  /  回执来源：确认接案",
+		"当前回执：已送执行队列" if case_accepted else "当前回执：待签收  /  阅览不改变流程状态",
+		"现场核验窗口：暮区 B-17  /  执行队列处理后关闭",
+	]
 
 
 func relay_status() -> String:
@@ -637,7 +747,7 @@ func interaction_prompt() -> String:
 		if chapter == 0 and not case_accepted and not evidence.has(true):
 			return "[E] 确认接案 / A-01    ·    也可直接前往 B-17"
 		if chapter == 1 and not case_accepted and not evidence.has(true):
-			return "[E] 查看任务详情 / A-01    ·    暂缓确认"
+			return "[E] 阅览授权档案 / A-01"
 		return "[E] 打开证据工作台 / A-01"
 	if tile in station.GATES:
 		if phase == 1 and gate_lock > 0.0:
@@ -659,6 +769,7 @@ func interaction_prompt() -> String:
 func interact() -> void:
 	if dusk_trials.interact(player.position, phase):
 		say(dusk_trials.message)
+		consume_relay_activations()
 		return
 	var tile := nearby()
 	if field_task.active:
@@ -698,7 +809,7 @@ func interact() -> void:
 		inspect_relay()
 	elif tile == station.LAB:
 		if chapter == 3:
-			record(phase, "调出本地计时记录。两边的时钟都从同一次脉冲开始。")
+			record(phase, "C-04 本地记录已取回。记录用本区秒数；同步规程可在 A-01 查阅。")
 		else:
 			say("C-04 同步实验室。两面墙上的时钟从来对不准。")
 	elif tile == station.MEDICAL:
@@ -793,7 +904,11 @@ func deploy_after_submission() -> void:
 		return
 	boss_live = true
 	boss_phase = phase
-	boss.position = station.point(station.GATES[deployment_gate])
+	var safe_tile := safe_hunter_spawn([])
+	if not station.walkable(1,safe_tile):
+		boss_live = false
+		return
+	boss.position = station.point(safe_tile)
 	boss_delay = 1.6
 	boss.show()
 	boss_route.clear()
@@ -809,7 +924,146 @@ func deploy_after_submission() -> void:
 	refresh_hunter_threat()
 	focus_hunter_audio(nearest_hunter())
 	sound.cue("deploy")
-	say(notice + "\nG-%02d 与附近部署共 %d 名追债人；全体换相门封锁 %.0f 秒。%s" % [deployment_gate + 1, 1 + extra_hunters.size(), gate_lock, hunter_spawn_report])
+	say(notice + "\n安全点部署共 %d 名追债人；换相门封锁 %.0f 秒。%s" % [1 + extra_hunters.size(), gate_lock, hunter_spawn_report])
+	show_hunter_intro()
+
+func show_hunter_intro() -> void:
+	if mode != "world" or hunter_intro_seen or not boss_live or extra_hunters.is_empty(): return
+	hunter_intro_seen = true
+	set_mode("hunter_intro")
+
+func acknowledge_hunters() -> void:
+	if mode != "hunter_intro": return
+	set_mode("world")
+	sound.cue("deploy")
+
+
+# Relay restarts create one local encounter each; active lamps cannot be refreshed.
+# Retire the oldest relay encounter on retry so expired lamps cannot grow an army.
+func consume_relay_activations() -> void:
+	var events: Array[int] = dusk_trials.relay_activation_events.duplicate()
+	dusk_trials.relay_activation_events.clear()
+	if phase != 1: return
+	for index in events:
+		if spawn_relay_hunter():
+			continue
+		# Deployment is part of activation: roll back the lamp if no safe actor can spawn.
+		if index >= 0 and index < dusk_trials.relay_timers.size():
+			dusk_trials.relay_timers[index] = 0.0
+			dusk_trials._sync_relay_progress()
+		dusk_trials.completed = false
+		dusk_trials._refresh()
+		dusk_trials.message = "当前位置没有安全部署点，电源柱已关闭；重新启动会重试追债信号。"
+		say(dusk_trials.message)
+	show_hunter_intro()
+
+
+func relay_hunter_spawn() -> Vector3:
+	var here := Vector3(player.position.x, 0, player.position.z)
+	var relay_hunters: Array[Node3D] = []
+	var occupied_positions: Array[Vector3] = []
+	for other in extra_hunters:
+		if other.has_meta("relay_power") and other.live:
+			relay_hunters.append(other)
+	var replace_oldest: Node3D = relay_hunters[0] if relay_hunters.size() >= 3 else null
+	if boss_live and boss_phase == 1:
+		occupied_positions.append(boss.position)
+	for other in extra_hunters:
+		if other.live and other != replace_oldest:
+			occupied_positions.append(other.position)
+	# Sweep the player's actual collision mask: player-only lasers also block escape.
+	var escapes: Array[Vector3] = []
+	for step in range(16):
+		var direction := Vector3(cos(float(step) * TAU / 16.0), 0, sin(float(step) * TAU / 16.0))
+		var query := PhysicsShapeQueryParameters3D.new()
+		query.shape = boss_body
+		query.transform = Transform3D(Basis.IDENTITY, here + Vector3.UP * 0.86)
+		query.motion = direction * 5.0
+		query.margin = 0.005
+		query.exclude = [player.get_rid()]
+		query.collision_mask = PLAYER_COLLISION_MASK
+		var space := get_world_3d().direct_space_state
+		if not space.intersect_shape(query, 1).is_empty() or space.cast_motion(query)[0] < 1.0:
+			continue
+		var occupied := false
+		for other in occupied_positions:
+			var along := clampf((other - here).dot(direction), 0.0, 5.0)
+			if other.distance_to(here + direction * along) < 1.15:
+				occupied = true
+		if not occupied:
+			escapes.append(direction)
+	if escapes.is_empty():
+		return Vector3.INF
+	var candidates: Array[Dictionary] = []
+	# Dense annular sampling avoids the old 2 m lattice missing narrow clear lanes.
+	for z in range(-12, 13):
+		for x in range(-12, 13):
+			var position := here + Vector3(x, 0, z)
+			var distance := position.distance_to(here)
+			if distance < 7.0 or distance > 12.0: continue
+			if not station.walkable(1, station.cell(position)): continue
+			var occupied := false
+			for other in occupied_positions:
+				if other.distance_to(position) < 4.0:
+					occupied = true
+			if occupied: continue
+			var escape := false
+			for direction in escapes:
+				if direction.dot((here - position).normalized()) >= 0.15:
+					escape = true
+					break
+			if not escape: continue
+			var in_view := camera.is_position_in_frustum(position + Vector3.UP * 1.3)
+			candidates.append({"position": position, "score": absf(distance - 9.0) + (0.0 if in_view else 1000.0)})
+	candidates.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.score < b.score)
+	for candidate in candidates:
+		var position: Vector3 = candidate.position
+		if boss_motion_fraction(position, position) < 1.0 or not hunter_has_sight(position): continue
+		# Direct unobstructed capsule travel is already a valid bounded pursuit route.
+		if boss_motion_fraction(position, here) >= 1.0:
+			return position
+		var route := hunter_spawn_route(position, here)
+		if route.size() >= 2 and route_world_length(route) <= 18.0:
+			return position
+	return Vector3.INF
+
+
+func spawn_relay_hunter() -> bool:
+	var position := relay_hunter_spawn()
+	if position == Vector3.INF:
+		return false
+	var relay_hunters: Array[Node3D] = []
+	for other in extra_hunters:
+		if other.has_meta("relay_power") and other.live: relay_hunters.append(other)
+	if relay_hunters.size() >= 3:
+		var oldest := relay_hunters[0]
+		focus_hunter_audio(boss)
+		oldest.live = false
+		oldest.hide()
+		extra_hunters.erase(oldest)
+		oldest.queue_free()
+	var hunter := HunterAgent.new()
+	hunter.name = "RelayHunter"
+	hunter.set_meta("relay_power", true)
+	add_child(hunter)
+	hunter.position = position
+	hunter.delay = 0.8
+	hunter.charge_recovery = 3.0
+	hunter.last_known = station.cell(player.position)
+	hunter.target_position = Vector3(player.position.x, 0, player.position.z)
+	hunter.tracking_time = 12.0
+	hunter.eye.material_override = station.palette.red
+	extra_hunters.append(hunter)
+	focus_hunter_audio(hunter)
+	sound.cue("deploy")
+	refresh_hunter_threat()
+	if not camera.is_position_in_frustum(position + Vector3.UP * 1.3):
+		var local: Vector3 = camera.global_basis.inverse() * (hunter.global_position - camera.global_position)
+		var direction := "右侧" if local.x >= 0.0 else "左侧"
+		if local.z > 0.0:
+			direction += "后方"
+		say(notice + "\n追债人已在%s接入；已响起方位警报。" % direction)
+	return true
 
 
 func clear_extra_hunters() -> void:
@@ -875,6 +1129,9 @@ func route_world_length(route: PackedVector3Array) -> float:
 
 
 func deploy_extra_hunters() -> void:
+	if lap_hunter_count <= 1:
+		hunter_spawn_report = "标准模式：一名追债人"
+		return
 	var candidates: Array[Dictionary] = []
 	var here: Vector2i = station.cell(player.position)
 	var reserved: Array = station.GATES + [station.AUDIT, station.OFFICE, station.RELAY, station.LAB, station.MEDICAL, station.LEDGER]
@@ -914,7 +1171,7 @@ func deploy_extra_hunters() -> void:
 			if score < pair_score:
 				pair_score = score
 				preferred = [first, second]
-	for count in range(EXTRA_HUNTER_COUNT):
+	for count in range(lap_hunter_count - 1):
 		var best_index := -1
 		var best_score := INF
 		for index in range(candidates.size()):
@@ -943,7 +1200,7 @@ func deploy_extra_hunters() -> void:
 		hunter.tracking_time = DUSK_LOCK_SECONDS + 2.0
 		hunter.eye.material_override = station.palette.red
 		extra_hunters.append(hunter)
-	hunter_spawn_report = "附近安全点不足，仅部署 %d/2 名；未占用障碍或长绕路点。" % extra_hunters.size() if extra_hunters.size() < EXTRA_HUNTER_COUNT else "绕开来路，再回晨区归档。"
+	hunter_spawn_report = "附近没有额外安全点，保留一名。" if extra_hunters.size() < lap_hunter_count - 1 else "绕开来路，再回晨区归档。"
 
 
 func update_extra_hunters(delta: float, sprint: bool) -> void:
@@ -1046,14 +1303,14 @@ func inspect_office() -> void:
 		store_progress()
 	elif chapter == 1 and phase == 1:
 		if case_accepted:
-			say("同一笔扣款已经执行。林岑死了。按 R 回到确认之前。")
+			say("暮区 B-17：林岑的生命维持已被扣款中止。本轮没有取得在场证词；R 返回本轮开始。")
 			activate_boss(station.RELAY)
 			return
 		if not evidence[2]:
 			evidence[2] = true
 			unbanked = true
 			sound.cue("collect")
-			say("林岑还活着：用事故前的求救线路。快，把授权记录送出去。")
+			say("在场证词已记录。林岑：他们还没收到复核回执。用事故前的求救线路，调度台网络归他们管。")
 			pending_evidence.append(2)
 			deploy_after_submission()
 			store_progress()
@@ -1063,7 +1320,7 @@ func inspect_office() -> void:
 
 func inspect_relay() -> void:
 	if chapter == 1 and phase == 0:
-		record(0, "取回配额单。受益账户属于管理层。授权编号 A-42。")
+		record(0, "A-42 配额单：批准栏为管理层，受益账户为管理层；执行栏等待第三方复核。")
 	elif chapter == 2:
 		if not solved:
 			record(phase, "记录 E-7 开关位置。" if phase == 0 else "找到 E-7 线缆编号和站外中继。")
@@ -1071,11 +1328,13 @@ func inspect_relay() -> void:
 			armed = true
 			say("旧疏散广播已启动。换相后接上暮区 E-7。")
 			activate_boss(station.GATES[1])
+			sync_relay_visual()
 		elif phase == 1 and armed:
 			if not patched:
 				patched = true
 				say("中继接通。回晨区调查台，外发完整账本。")
 				deploy_after_submission()
+				sync_relay_visual()
 			else:
 				say("中继已接通，回晨区 A-01 外发。")
 		else:
@@ -1093,10 +1352,10 @@ func objective() -> String:
 			if not evidence[1]: return "到 G 门按 E 换区，再查暮区 B-17。"
 			return "回晨区 A-01：归档日志，核对事件。"
 		1:
-			if case_accepted: return "A-42 已签收。按 R 可撤销本轮接案。"
-			if not evidence[1]: return "晨区 A-01：查看授权，暂缓签字。"
+			if case_accepted: return "A-42 已送执行。可在暮区 B-17 核对现场回执。"
+			if not evidence[1]: return "晨区 A-01：阅览 A-42 授权流程。"
 			if not evidence[0]: return "晨区 R-03：取得配额授权单。"
-			if not evidence[2]: return "暮区 B-17：查看未签字的结果。"
+			if not evidence[2]: return "暮区 B-17：补充现场记录。"
 			return "回晨区 A-01：核对授权与执行人。"
 		3:
 			if not evidence[0] or not evidence[1]: return "晨暮 C-04：各取一份同步记录。"
@@ -1116,6 +1375,8 @@ func objective() -> String:
 
 func guidance() -> String:
 	if phase == 1 and dusk_trials.active and not dusk_trials.completed:
+		if dusk_trials.kind == "relay":
+			return "三柱位置见小地图 · E 启动 · Shift 短冲刺 · F 断相"
 		return "沿地面发光箭头移动 · 靠近实体按 E · 世界不会暂停"
 	if field_task.active:
 		return "现场操作中 · 可移动躲避 · Esc 取消操作"
@@ -1128,7 +1389,7 @@ func guidance() -> String:
 	if boss_live and phase == 0 and upload <= 0.0:
 		return "晨区暂时安全，可回 A-01 整理证据。"
 	if boss_live:
-		return "Shift 奔跑 · F 断相：需同区、无遮挡。"
+		return "Shift 短冲刺消耗体力 · F 断相：需同区、无遮挡。"
 	if chapter == 1 and case_accepted:
 		return "R 撤销本轮签字，已归档证据不会丢失。"
 	if chapter == 0 and not evidence[0]:
@@ -1163,7 +1424,7 @@ func puzzle_choices() -> Array:
 
 
 func can_confirm_again() -> bool:
-	return chapter == 1 and not case_accepted and not evidence[2]
+	return mode == "audit" and chapter == 1 and evidence[1] and not case_accepted and not evidence[2]
 
 
 func answer(index: int) -> void:
@@ -1216,8 +1477,16 @@ func pick_timeline(event: String) -> void:
 
 func submit_timeline() -> void:
 	if mode != "audit" or chapter != 3 or not puzzle_available(): return
+	if timeline_seconds.is_empty():
+		say("换算栏尚未填写。请填写暮区记录对应的晨秒数。")
+		sound.cue("fail")
+		return
+	if timeline_order.size() != 2:
+		say("排序尚未完成。按先后各点选一张事件卡；再次点选可撤回。")
+		sound.cue("fail")
+		return
 	if not timeline_seconds.is_valid_int() or timeline_seconds.to_int() != 5 or timeline_order != ["debit", "filing"]:
-		say("先用 1:1000 换成晨区秒数，再按先发生、后发生点选两张记录。")
+		say("两份记录尚未对齐。核对同步规程、填写单位和所选顺序。")
 		sound.cue("fail")
 		return
 	complete_puzzle()
@@ -1230,6 +1499,7 @@ func complete_puzzle() -> void:
 		set_mode("world")
 		say("线路核验完成：晨区合上开关，暮区接上中继。")
 		sound.cue("success")
+		sync_relay_visual()
 		return
 	var conclusion: String = [
 		"同一间办公室。去时钟实验室查一查，这份任务究竟什么时候被建立。",
@@ -1252,12 +1522,50 @@ func begin_upload() -> void:
 	if mode != "audit" or not ready_to_send():
 		return
 	stop_dusk_chase()
-	upload = 6.0
-	last_known = station.AUDIT
+	upload = 30.0
+	last_known = station.cell(player.position)
 	path_timer = 0.0
 	set_mode("world")
-	say("站外传输中。六秒后，回执会写入审计匣。")
+	deploy_upload_hunter()
+	say("上行警报已触发晨区清算单位。保持移动，撑过三十秒传输；换相暂不可用。")
 	sound.cue("archive")
+	sync_relay_visual()
+
+
+func deploy_upload_hunter() -> void:
+	var best := Vector3.INF
+	var best_score := INF
+	var here: Vector2i = station.cell(player.position)
+	for y in range(here.y - 4, here.y + 5):
+		for x in range(here.x - 4, here.x + 5):
+			var tile := Vector2i(x, y)
+			if not station.walkable(0, tile): continue
+			var point: Vector3 = station.point(tile)
+			var distance := point.distance_to(player.position)
+			if distance < 8.0 or distance > 16.0: continue
+			if boss_motion_fraction(point, point) < 1.0: continue
+			var route: Array = station.hunter_path(0, tile, here)
+			if route.is_empty() or route.size() > 7: continue
+			var score := absf(distance - 10.0) + (0.0 if hunter_has_sight(point) else 20.0)
+			if score < best_score:
+				best = point
+				best_score = score
+	if best == Vector3.INF:
+		# The authored A-01 corridor supplies these candidates; never force an overlap.
+		return
+	boss.position = best
+	boss_phase = 0
+	boss_live = true
+	boss_chasing = true
+	boss_delay = 0.8
+	dusk_grace = 0.8
+	charge_recovery = 1.5
+	tracking_time = 31.0
+	boss_route.clear()
+	boss_stall_time = 0.0
+	boss.show()
+	focus_hunter_audio(boss)
+	sound.cue("deploy")
 
 
 func say(message: String) -> void:
@@ -1301,20 +1609,51 @@ func shift(tile: Vector2i) -> void:
 	else:
 		boss.hide()
 		threat = 0.0
-	say("晨区暂时安全。回 A-01 归档、核验记录。" if phase == 0 else "暮区有清算单位巡逻。听脚步、绕开视线，别在门口久留。")
+	say("晨区暂时安全。回 A-01 归档、核验记录。" if phase == 0 else "暮区已部署 %d/%d 名追债人。%s 听脚步与警报，别在门口久留。" % [(1 if boss_live else 0)+extra_hunters.size(),lap_hunter_count,hunter_spawn_report])
 
 
-func dusk_spawn_tile() -> Vector2i:
+var previous_spawn := Vector2i(-1,-1)
+var spawn_rng := RandomNumberGenerator.new()
+
+func safe_hunter_spawn(reserved: Array) -> Vector2i:
 	var origin: Vector2i = station.cell(player.position)
+	var candidates: Array[Vector2i] = []
+	for z in range(1,station.MAP_SIZE.y-1):
+		for x in range(1,station.MAP_SIZE.x-1):
+			var tile := Vector2i(x,z)
+			if not station.walkable(1,tile) or tile == previous_spawn or tile in reserved: continue
+			var point: Vector3 = station.point(tile)
+			if point.distance_to(player.position) < 28.0 or point.distance_to(player.position) > 64.0: continue
+			var blocked := false
+			for gate in station.GATES:
+				if point.distance_to(station.point(gate)) < 8.0: blocked = true
+			for other in reserved:
+				if point.distance_to(station.point(other)) < 8.0: blocked = true
+			if not blocked: candidates.append(tile)
+	spawn_rng.randomize()
+	while not candidates.is_empty():
+		var index := spawn_rng.randi_range(0,candidates.size()-1)
+		var tile: Vector2i = candidates[index]
+		candidates.remove_at(index)
+		if boss_motion_fraction(station.point(tile),station.point(tile)) < 1.0: continue
+		var route: Array = station.hunter_path(1,origin,tile)
+		if route.size() < 9 or route.size() > 25: continue
+		previous_spawn = tile
+		return tile
+	# Fall back to a reachable authored point only when random candidates are exhausted.
 	for target in [station.LAB, station.LEDGER, station.RELAY, station.OFFICE]:
 		var route: Array[Vector2i] = station.hunter_path(1, origin, target)
 		if route.size() >= 9:
-			return route[mini(10, route.size() - 1)]
-	return station.RELAY
+			var tile: Vector2i = route[mini(10,route.size()-1)]
+			if boss_motion_fraction(station.point(tile),station.point(tile)) == 1.0: return tile
+	return Vector2i(-1,-1)
+
+func dusk_spawn_tile() -> Vector2i:
+	return safe_hunter_spawn([])
 
 
 func activate_boss(tile: Vector2i) -> void:
-	if boss_live or phase != 1:
+	if boss_live or phase != 1 or not station.walkable(1,tile):
 		return
 	boss_live = true
 	boss_phase = 1
@@ -1324,8 +1663,11 @@ func activate_boss(tile: Vector2i) -> void:
 	tracking_time = 0.0
 	patrol_index = 0
 	path_timer = 0.0
+	boss_stall_time = 0.0
 	boss_route.clear()
+	deploy_extra_hunters()
 	sound.cue("deploy")
+	show_hunter_intro()
 
 
 func stop_dusk_chase() -> void:
@@ -1352,7 +1694,7 @@ func stop_dusk_chase() -> void:
 
 func update_boss(delta: float, sprint: bool) -> void:
 	boss_chasing = false
-	if phase != 1 or boss_phase != 1:
+	if boss_phase != phase or (phase != 1 and not (phase == 0 and upload > 0.0)):
 		stop_dusk_chase()
 		return
 	var protected := dusk_grace > 0.0
@@ -1374,8 +1716,15 @@ func update_boss(delta: float, sprint: bool) -> void:
 		boss_chasing = true
 	if boss_delay > 0.0 or stunned > 0.0:
 		return
+	if same_phase and boss_motion_fraction(boss.position, boss.position) < 0.001:
+		var recovered := try_boss_overlap_recovery(boss.position)
+		if recovered != boss.position:
+			boss.position = recovered
+			boss_stall_time = 0.0
+			boss_route.clear()
+			return
 	var seen := same_phase and distance < 13.0 and has_sight()
-	var locked := same_phase and gate_lock > 0.0
+	var locked := same_phase and (gate_lock > 0.0 or upload > 0.0)
 	tracking_time = maxf(0.0, tracking_time - delta)
 	if locked or seen or (same_phase and sprint and distance < 10.5):
 		var next_known: Vector2i = station.cell(player.position)
@@ -1431,11 +1780,15 @@ func update_boss(delta: float, sprint: bool) -> void:
 		target = player_target
 		boss_route.clear()
 	else:
-		if boss_route.is_empty() or (path_timer <= 0.0 and boss.position.distance_to(center) < 0.22):
+		# 阶段 A：持续无进展时无视格心距离强制重规划
+		var stalled_replan := boss_stall_time >= BOSS_STALL_REPLAN
+		if boss_route.is_empty() or stalled_replan or (path_timer <= 0.0 and boss.position.distance_to(center) < 0.22):
 			boss_route = station.hunter_path(boss_phase, cell_at_boss, destination)
 			if not boss_route.is_empty() and boss.position.distance_to(center) < 0.22:
 				boss_route.pop_front()
 			path_timer = 0.30
+			if stalled_replan:
+				boss_stall_time = 0.0  # 重规划后清零，避免每帧都重算
 		if not boss_route.is_empty():
 			target = station.point(boss_route[0])
 		if locked and cell_at_boss == destination: target = player_target
@@ -1449,9 +1802,16 @@ func update_boss(delta: float, sprint: bool) -> void:
 			boss_route.pop_front()
 		return
 	boss.look_at(target, Vector3.UP)
-	var speed := 7.2 if charge_time > 0.0 else (4.45 if upload > 0.0 else (3.77 if seen else 3.27))
+	var speed := 7.2 if charge_time > 0.0 else (4.45 if upload > 0.0 else (BOSS_CHASE_SPEED if seen else 3.27))
 	var next := boss.position.move_toward(target, speed * delta)
+	var prev_pos := boss.position
 	boss.position = boss.position.lerp(next, boss_motion_fraction(boss.position, next))
+	# 阶段 A：跟踪"应该移动但无进展"
+	var progressed := prev_pos.distance_to(boss.position) > 0.0005
+	if progressed:
+		boss_stall_time = 0.0
+	else:
+		boss_stall_time += delta
 
 
 func boss_motion_fraction(origin: Vector3, target: Vector3) -> float:
@@ -1467,6 +1827,50 @@ func boss_motion_fraction(origin: Vector3, target: Vector3) -> float:
 	if not space.intersect_shape(query, 1).is_empty(): return 0.0
 	var safe: float = space.cast_motion(query)[0]
 	return maxf(0.0, safe - 0.01 / maxf(query.motion.length(), 0.01)) if safe < 1.0 else 1.0
+
+
+# 阶段 A：起点胶囊轻微重叠时的有界安全恢复
+# 沿 8 个水平方向尝试小步推出，找到第一个不重叠的位置
+# 不传送：单次推出 ≤ BOSS_RECOVER_MAX（0.72m），且只在 capsule 不再 overlap 时接受
+# 不修改碰撞体、不关闭碰撞检查、不穿越墙体
+func try_boss_overlap_recovery(origin: Vector3) -> Vector3:
+	var space := get_world_3d().direct_space_state
+	var query := PhysicsShapeQueryParameters3D.new()
+	query.shape = boss_body
+	var start := origin + Vector3.UP * 0.86
+	query.transform = Transform3D(Basis(), start)
+	query.margin = 0.005
+	query.exclude = [player.get_rid()]
+	var ignored: Array[RID] = [player.get_rid()]
+	for hit in space.intersect_shape(query):
+		if not ignored.has(hit.rid): ignored.append(hit.rid)
+	# 8 个水平方向 + 优先朝当前 tile 中心（更可能回到走廊）
+	var tile_center: Vector3 = station.point(station.cell(origin))
+	var to_center := (tile_center - origin)
+	to_center.y = 0.0
+	var directions: Array[Vector3] = []
+	if to_center.length() > 0.01:
+		directions.append(to_center.normalized())
+	for angle in [0.0, PI/4, PI/2, PI*3/4, PI, PI*5/4, PI*3/2, PI*7/4]:
+		directions.append(Vector3(cos(angle), 0, sin(angle)))
+	for step in range(1, int(BOSS_RECOVER_MAX / BOSS_RECOVER_STEP) + 1):
+		for dir in directions:
+			var offset := dir * (step * BOSS_RECOVER_STEP)
+			var candidate := origin + offset
+			if not station.walkable(boss_phase, station.cell(candidate)): continue
+			query.transform.origin = start + offset
+			query.exclude = [player.get_rid()]
+			if not space.intersect_shape(query, 1).is_empty(): continue
+			# Ignore only initial contacts in the sweep, but never cross a wall with the body center.
+			var ray := PhysicsRayQueryParameters3D.create(start, start + offset, 1, [player.get_rid()])
+			if not space.intersect_ray(ray).is_empty(): continue
+			query.transform.origin = start
+			query.exclude = ignored
+			query.motion = offset
+			var safe := space.cast_motion(query)[0]
+			query.motion = Vector3.ZERO
+			if safe >= 1.0: return candidate
+	return origin  # 有界尝试失败：放弃，不强行传送
 
 
 func boss_detour_path(target: Vector3) -> PackedVector3Array:
@@ -1504,6 +1908,30 @@ func hunter_has_sight(origin: Vector3) -> bool:
 	return get_world_3d().direct_space_state.intersect_ray(query).is_empty()
 
 
+func apply_stamina_tick(delta: float, shift_held: bool, moved: bool) -> void:
+	# 测试与物理循环共用：只有 Shift+有效位移才扣；耗尽后必须松开才解锁。
+	var wants := shift_held and moved
+	if wants and not stamina_exhausted and stamina > 0.0:
+		var sprint_time := minf(delta, stamina / STAMINA_DRAIN_RATE)
+		stamina = maxf(0.0, stamina - STAMINA_DRAIN_RATE * sprint_time)
+		stamina_regen_wait = STAMINA_REGEN_DELAY
+		if stamina <= 0.00001:
+			stamina = 0.0
+			stamina_exhausted = true
+			actual_sprinting = false
+			stamina_regen_wait = STAMINA_REGEN_DELAY
+		else:
+			actual_sprinting = true
+		return
+	else:
+		actual_sprinting = false
+		var regen_time := maxf(0.0, delta - stamina_regen_wait)
+		stamina_regen_wait = maxf(0.0, stamina_regen_wait - delta)
+		stamina = minf(STAMINA_MAX, stamina + STAMINA_REGEN_RATE * regen_time)
+		if stamina_exhausted and stamina >= STAMINA_RESTART_THRESHOLD and not shift_held:
+			stamina_exhausted = false
+
+
 func pulse() -> void:
 	if charges <= 0:
 		say("本轮断相脉冲已用尽。")
@@ -1524,7 +1952,7 @@ func pulse() -> void:
 		return
 	# One area pulse, one charge, even when several visible hunters are affected.
 	charges -= 1
-	sound.cues.warning.stop()
+	sound.stop_cue("warning")
 	sound.cue("success")
 	say("%d 名追债人失相。现在走。" % hits)
 
@@ -1536,13 +1964,14 @@ func threat_text() -> String:
 	var prefix := "%d 名追债人 · " % count
 	var active_stun: float = stunned if nearest == boss else nearest.stunned
 	var warning: float = charge_warning if nearest == boss else nearest.charge_warning
-	if active_stun > 0.0: return prefix + "最近失相 %.1f s" % active_stun
-	if warning > 0.0: return prefix + "最近准备冲刺"
+	if active_stun > 0.0: return prefix + "已失相 %.1f s" % active_stun
+	if warning > 0.0: return prefix + "准备冲刺"
 	if gate_lock > 0.0: return prefix + "警报精确追踪"
-	return prefix + "最近 %.0f m" % nearest.position.distance_to(player.position)
+	return prefix + "注意脚步与警报"
 
 
 func reset_lap(message: String) -> void:
+	lap_hunter_count = options.hunter_count
 	sound.quiet()
 	clear_extra_hunters()
 	station.laser_grid.clear()
@@ -1551,6 +1980,7 @@ func reset_lap(message: String) -> void:
 	task_committing = false
 	gate_lock = 0.0
 	deployment_gate = -1
+	signature_pending = false
 	alignment_fields.clear()
 	timeline_seconds = ""
 	timeline_order.clear()
@@ -1575,16 +2005,22 @@ func reset_lap(message: String) -> void:
 	boss_chasing = false
 	boss.hide()
 	boss_route.clear()
+	boss_stall_time = 0.0
 	stunned = 0.0
 	charge_warning = 0.0
 	charge_time = 0.0
 	charge_recovery = 0.0
 	gate_observed = [0, 0]
 	sprint_observed = 0
+	stamina = STAMINA_MAX
+	stamina_regen_wait = 0.0
+	stamina_exhausted = false
+	actual_sprinting = false
 	spawn_at_desk()
 	set_mode("world")
 	store_progress()
 	say(message)
+	sync_relay_visual()
 
 
 func save_label() -> String:

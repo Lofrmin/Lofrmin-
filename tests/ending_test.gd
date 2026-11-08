@@ -51,6 +51,7 @@ func run() -> void:
 		check(game.mode == "ending", "duplicate completion is harmless")
 	game.handle_action("replay_ending")
 	check(game.mode == "epilogue" and game.epilogue.playing, "receipt can replay closing movie")
+	check(game.epilogue.video.bus == "CorrAmbience" and is_equal_approx(game.epilogue.video.volume_db, -8.0), "ending follows the shared master and ambience volume settings")
 	press(game, KEY_ESCAPE)
 	check(game.mode == "ending" and not game.epilogue.playing and not game.get_viewport().disable_3d, "Escape skips into the receipt")
 	game.handle_action("replay_ending")

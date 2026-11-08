@@ -23,12 +23,7 @@ func run() -> void:
 	var gate_path: Array[Vector2i] = game.station.path(1, game.station.cell(game.boss.position), game.station.GATES[0])
 	check(game.station.walkable(1, game.station.cell(game.boss.position)), "hunter spawn is on a walkable Dusk tile")
 	var spawn_tile: Vector2i = game.station.cell(game.boss.position)
-	var spawn_comes_from_patrol_route := false
-	for anchor in [game.station.LAB, game.station.LEDGER, game.station.RELAY, game.station.OFFICE]:
-		var route: Array[Vector2i] = game.station.path(1, game.station.GATES[0], anchor)
-		if route.size() >= 9 and route[mini(10, route.size() - 1)] == spawn_tile:
-			spawn_comes_from_patrol_route = true
-	check(spawn_comes_from_patrol_route, "hunter spawn is a reachable waypoint along an authored patrol route")
+	check(gate_path.size() >= 9 and game.boss.position.distance_to(game.player.position) >= 28.0, "random spawn is safely reachable and distant")
 	check(gate_path.size() >= 8, "first spawn is not on top of the entry gate")
 	var grace_value: Variant = game.get("dusk_grace")
 	var grace_used: Variant = game.get("dusk_grace_used")
@@ -135,10 +130,10 @@ func run() -> void:
 	game.boss_phase = 1
 	game.boss.position = first_spawn
 	game.begin_upload()
-	check(is_equal_approx(game.upload, 6.0), "final upload still lasts six seconds")
-	check(not game.boss_live and not game.boss_chasing and not game.boss.visible, "upload keeps Morning free of hunters")
-	check(game.boss_route.is_empty() and is_zero_approx(game.threat), "upload clears chase routes and HUD threat")
-	check(not game.sound.chase.playing, "upload does not start chase ambience")
+	check(is_equal_approx(game.upload, 30.0), "final upload lasts thirty seconds")
+	check(game.boss_live and game.boss_chasing and game.boss.visible and game.boss_phase == 0, "upload deploys a morning pursuer")
+	check(game.boss_route.is_empty() and is_zero_approx(game.threat), "upload clears stale dusk routes and threat before new encounter")
+	check(not game.sound.chase.playing, "chase ambience waits for the next physics update")
 	game.upload = 4.5
 	game.set_mode("audit")
 	game.begin_upload()

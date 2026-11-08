@@ -14,6 +14,7 @@ func _initialize() -> void:
 	call_deferred("run")
 
 func dusk(tile: Vector2i) -> void:
+	game.hunter_intro_seen=true # Tutorial behavior has its own test; exercise actor physics here.
 	game.stop_dusk_chase()
 	game.phase = 1
 	game.map_phase = 1
@@ -27,6 +28,8 @@ func run() -> void:
 	game = load("res://tests/fixture.gd").new()
 	root.add_child(game)
 	await physics_frame
+	game.options.hunter_count = 2
+	game.lap_hunter_count = 2
 	var map = game.station
 	# Every evidence terminal in every authored break stage, not a radius-only sample.
 	for stage in range(1, 6):
@@ -35,8 +38,8 @@ func run() -> void:
 			dusk(terminal)
 			await physics_frame
 			game.deploy_after_submission()
-			check(game.boss_live and game.boss_phase == 1, "S%d %s original gate hunter retained" % [stage, terminal])
-			check(game.extra_hunters.size() == 2, "S%d %s two safe nearby hunters: %s" % [stage, terminal, game.hunter_spawn_report])
+			check(game.boss_live and game.boss_phase == 1, "S%d %s random primary hunter retained" % [stage, terminal])
+			check(game.extra_hunters.size() == 1, "S%d %s one safe extra hunter: %s" % [stage, terminal, game.hunter_spawn_report])
 			check(game.gate_lock == 12.0 and game.tracking_time >= 14.0, "lock and initial tracking remain")
 			var positions: Array[Vector3] = []
 			for hunter in game.extra_hunters:
@@ -55,7 +58,7 @@ func run() -> void:
 			# Repeated explicit deployment replaces nodes, never accumulates a third extra.
 			var previous: Array = game.extra_hunters.duplicate()
 			game.deploy_after_submission()
-			check(game.extra_hunters.size() == 2, "repeat submission keeps fixed-size pool")
+			check(game.extra_hunters.size() == 1, "repeat submission keeps fixed-size pool")
 			for hunter in previous: check(hunter.is_queued_for_deletion() and not hunter.live, "old deployment retired")
 			# Alarm tracks within-cell player movement even while actors are delayed/stunned.
 			game.player.position += Vector3(0.41, 0, 0.33)
@@ -149,7 +152,6 @@ func run() -> void:
 	hunter.delay = 0.0
 	hunter.visible = true
 	hunter.stunned = 0.0
-	game.extra_hunters[1].position = map.point(map.RELAY)
 	game.player.position = center + Vector3(0.45, 0.05, 0)
 	game.boss.position = map.point(map.GATES[0])
 	game.charges = 1

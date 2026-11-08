@@ -51,7 +51,7 @@ func spatial_trial(task: String) -> void:
 	else:
 		game.player.position = trial.sites[1].position + Vector3(-0.95, 0.05, 0)
 		press(KEY_E)
-		check(not trial.completed and trial.progress == 0, "wrong world switch cannot complete")
+		check(not trial.completed and trial.progress == (1 if task == "relay" else 0), "relay accepts any first column; clock requires first switch")
 		for i in range(trial.sites.size()):
 			game.player.position = trial.sites[i].position + Vector3(-0.95, 0.05, 0)
 			press(KEY_E)
@@ -102,7 +102,7 @@ func run() -> void:
 	var distance: float = game.player.position.distance_squared_to(game.station.point(gate))
 	for other in game.station.GATES:
 		check(distance <= game.player.position.distance_squared_to(game.station.point(other)), "spawn is nearest gate")
-	check(game.station.cell(game.boss.position) == gate, "hunter is at selected gate")
+	check(game.station.hunter_path(1, game.station.cell(game.boss.position), game.station.cell(game.player.position)).size() >= 9 and game.boss.position.distance_to(game.player.position) >= 28.0, "hunter uses reachable distant randomized spawn")
 	check(game.banked_evidence() == [true,false,false], "new dusk records excluded from save")
 	var lock: float = game.gate_lock
 	game.inspect_office()

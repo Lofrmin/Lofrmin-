@@ -19,6 +19,7 @@ var patrol_index := 0
 var last_known := Vector2i.ZERO
 var target_position := Vector3.ZERO
 var previous_position := Vector3.ZERO
+var stall_time := 0.0
 
 func _ready() -> void:
 	rig = Visual.new()
@@ -52,6 +53,13 @@ func update_agent(game: Node3D, delta: float, sprint: bool) -> void:
 		tracking_time = maxf(tracking_time, 3.0)
 	chasing = locked or seen or tracking_time > 0.0
 	if delay > 0.0 or stunned > 0.0: return
+	if game.boss_motion_fraction(position,position) < 0.001:
+		var recovered: Vector3 = game.try_boss_overlap_recovery(position)
+		if recovered != position:
+			position = recovered
+			stall_time = 0.0
+			route.clear()
+			return
 	var direct: bool = chasing and game.boss_motion_fraction(position, target_position) >= 1.0
 	if seen and direct and distance < 1.10 and game.dusk_grace <= 0.0 and not game.dev_god:
 		game.reset_lap("追债人完成结算。审计匣里的记录随你回到了开场。")
@@ -81,10 +89,11 @@ func update_agent(game: Node3D, delta: float, sprint: bool) -> void:
 		target = target_position
 		route.clear()
 	else:
-		if route.is_empty() or (path_timer <= 0.0 and position.distance_to(center) < 0.22):
+		if route.is_empty() or stall_time >= game.BOSS_STALL_REPLAN or (path_timer <= 0.0 and position.distance_to(center) < 0.22):
 			route = game.station.hunter_path(1, tile, destination)
 			if not route.is_empty() and position.distance_to(center) < 0.22: route.pop_front()
 			path_timer = 0.30
+			stall_time = 0.0
 		if not route.is_empty(): target = game.station.point(route[0])
 		if tile == destination and chasing: target = target_position
 		if game.boss_motion_fraction(position, target) < 1.0:
@@ -94,9 +103,10 @@ func update_agent(game: Node3D, delta: float, sprint: bool) -> void:
 		if not route.is_empty(): route.pop_front()
 		return
 	look_at(target, Vector3.UP)
-	var speed := 7.2 if charge_time > 0.0 else (3.77 if seen else 3.27)
+	var speed: float = 7.2 if charge_time > 0.0 else (game.BOSS_CHASE_SPEED if seen else 3.27)
 	var next := position.move_toward(target, speed * delta)
 	position = position.lerp(next, game.boss_motion_fraction(position, next))
+	stall_time = stall_time + delta if position.distance_to(previous_position) < 0.0005 else 0.0
 
 func pulse_stun() -> void:
 	stunned = 2.25

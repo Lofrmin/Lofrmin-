@@ -159,6 +159,9 @@ var permanent: Array[Dictionary] = [{}, {}]
 var permanent_nodes: Array[Dictionary] = [{}, {}]
 var barriers: Array[Array] = [[], []]
 var return_arrows: Array[Node3D] = []
+# P1 R-03 / E-7 中继视觉反馈：每相一份，键 = 子节点引用，值由 update_relay_state 驱动
+# 子节点纯装饰（不新增碰撞、不改交互范围、不改谜题与时长），复用 game.relay_status 的阶段语义
+var relay_rigs: Array[Dictionary] = []
 var gate_font: SystemFont
 const LaserGrid := preload("res://laser_grid.gd")
 var laser_grid := LaserGrid.new()
@@ -522,6 +525,10 @@ func fixture(layer: Node3D, tile: Vector2i, phase: int, accent: Material) -> voi
 	screen.position = desk + Vector3(0, 1.23, 0.068)
 	if tile == AUDIT:
 		build_audit_details(layer, desk, screen, monitor_shell)
+	elif tile == RELAY:
+		# P1：R-03 的旧显示器由新中继模块替代，避免几何重叠遮挡
+		monitor_shell.visible = false
+		screen.visible = false
 	var plate := sign_at(layer, desk + Vector3(0, 1.86, 0.12), heading, accent.albedo_color)
 	plate.billboard = BaseMaterial3D.BILLBOARD_DISABLED
 	plate.pixel_size = 0.00165
@@ -561,6 +568,8 @@ func fixture(layer: Node3D, tile: Vector2i, phase: int, accent: Material) -> voi
 				var height := 0.36 * row - 0.72
 				box(layer, rack + Vector3(0, height, 0.253), Vector3(0.36, 0.19, 0.07), palette.wall)
 				box(layer, rack + Vector3(0.11, height, 0.301), Vector3(0.07, 0.036, 0.024), accent)
+	if tile == RELAY:
+		build_relay_rig(layer, center, phase, accent)
 
 
 func build_phase_gate(layer: Node3D, tile: Vector2i, accent: Material) -> void:
@@ -689,6 +698,203 @@ func build_audit_details(layer: Node3D, desk: Vector3, screen: MeshInstance3D, m
 func update_audit_status(text: String) -> void:
 	for label in audit_labels:
 		label.text = text
+
+
+# ── P1 R-03 / E-7 中继视觉反馈 ────────────────────────────────────────
+# 复古工业中继模块：机箱 + 刀开关 + E-7 端口组 + 状态灯 + 上传扫描条
+# 纯装饰（无碰撞、无新交互、无新增时长），全部由 game.relay_status 阶段驱动
+func build_relay_rig(layer: Node3D, center: Vector3, phase: int, accent: Material) -> void:
+	var rig := Node3D.new()
+	rig.name = "RelayRig_%d" % phase
+	layer.add_child(rig)
+	# 安装位置：继电器桌上，桌顶 Y=0.95+0.14/2=1.02（之前误用 0.95 让底座沉入桌面）
+	var desk := center + Vector3(0, 0, -1.21)
+	rig.position = desk + Vector3(0, 1.02, 0)
+
+	# ── 机箱底座：复古工业风格，宽扁盒 ──
+	box(rig, Vector3(0, 0.055, 0), Vector3(1.30, 0.11, 0.46), palette.frame)
+	# 机箱侧裙
+	box(rig, Vector3(0, 0.16, -0.20), Vector3(1.30, 0.10, 0.04), palette.wall)
+	# 前面板（略带倾角的斜面）
+	var face := box(rig, Vector3(0, 0.16, 0.10), Vector3(1.24, 0.18, 0.30), palette.alloy if phase == 0 else palette.alloy_warm)
+	face.rotation.x = -0.18
+
+	# ── 状态灯（多形态：颜色 + 位置亮灭 + 文字）──
+	# 三盏小灯：核验（左）、合闸（中）、外发（右）
+	var lamp_mats: Array[StandardMaterial3D] = []
+	var lamp_positions := [Vector3(-0.42, 0.265, 0.235), Vector3(0.0, 0.265, 0.235), Vector3(0.42, 0.265, 0.235)]
+	for i in range(3):
+		var lamp_mat := StandardMaterial3D.new()
+		lamp_mat.albedo_color = Color("3a4148")
+		lamp_mat.emission_enabled = true
+		lamp_mat.emission = Color("101418")
+		lamp_mat.emission_energy_multiplier = 0.0
+		lamp_mat.roughness = 0.35
+		lamp_mats.append(lamp_mat)
+		var socket := box(rig, lamp_positions[i] - Vector3(0, 0, 0.005), Vector3(0.10, 0.025, 0.05), palette.ink)
+		socket.name = "LampSocket_%d" % i
+		var bulb := MeshInstance3D.new()
+		var bulb_mesh := SphereMesh.new()
+		bulb_mesh.radius = 0.028
+		bulb_mesh.height = 0.056
+		bulb_mesh.radial_segments = 12
+		bulb_mesh.rings = 6
+		bulb.mesh = bulb_mesh
+		bulb.material_override = lamp_mat
+		rig.add_child(bulb)
+		bulb.position = lamp_positions[i] + Vector3(0, 0.018, 0.018)
+		bulb.name = "Lamp_%d" % i
+
+	# ── 刀开关：会转动的手柄（合闸时从竖直到水平）──
+	var switch_base := box(rig, Vector3(-0.50, 0.21, -0.02), Vector3(0.16, 0.06, 0.16), palette.ink)
+	switch_base.name = "SwitchBase"
+	var switch_arm := Node3D.new()
+	switch_arm.name = "SwitchArm"
+	rig.add_child(switch_arm)
+	switch_arm.position = Vector3(-0.50, 0.24, -0.02)
+	var arm_mesh := box(switch_arm, Vector3(0, 0.10, 0), Vector3(0.025, 0.20, 0.025), palette.ivory)
+	arm_mesh.name = "Arm"
+	var knob := MeshInstance3D.new()
+	var knob_mesh := SphereMesh.new()
+	knob_mesh.radius = 0.030
+	knob_mesh.height = 0.060
+	knob_mesh.radial_segments = 10
+	knob_mesh.rings = 5
+	knob.mesh = knob_mesh
+	knob.material_override = palette.red
+	switch_arm.add_child(knob)
+	knob.position = Vector3(0, 0.205, 0)
+	knob.name = "Knob"
+	# 初始：断开（竖起）
+	switch_arm.rotation.x = 0.0
+
+	# ── E-7 同编号端口组（4 个，靠近面板前沿）──
+	var port_mats: Array[StandardMaterial3D] = []
+	for i in range(4):
+		var px := -0.12 + i * 0.16
+		# 端口金属环
+		box(rig, Vector3(px, 0.17, 0.20), Vector3(0.10, 0.06, 0.10), palette.frame)
+		var port_mat := StandardMaterial3D.new()
+		port_mat.albedo_color = Color("2a3036")
+		port_mat.emission_enabled = true
+		port_mat.emission = Color("0a0d10")
+		port_mat.emission_energy_multiplier = 0.0
+		port_mats.append(port_mat)
+		var core := box(rig, Vector3(px, 0.175, 0.21), Vector3(0.055, 0.04, 0.055), port_mat)
+		core.name = "Port_%d" % i
+
+	# ── E-7 标签（永远显示，与 puzzle 中编号一致）──
+	# 放在机箱顶面后方，竖直朝 +z（玩家从桌正前方能直接读到）
+	var label := sign_at(rig, Vector3(0, 0.30, -0.12), "E-7 / RELAY", Color("e79a4c") if phase == 1 else Color("69cdc1"))
+	label.name = "E7_Label"
+	label.billboard = BaseMaterial3D.BILLBOARD_DISABLED
+	label.font_size = 48
+	label.pixel_size = 0.0035
+	label.outline_size = 6
+	# 默认 sign_at 是 billboard，禁用后 Label3D 的 +Z 面朝向父节点 +Z，玩家从 +z 看过来正好读到
+	label.rotation = Vector3.ZERO
+
+	# ── 状态短文字（在机箱前面板，竖直朝 +z，玩家正常站位即可读到）──
+	# 关键：之前 rotation.x = -PI/2+0.18 是平铺在桌面上，正常站立看不到；改成竖直朝前
+	var status_label := sign_at(rig, Vector3(0, 0.20, 0.27), "IDLE", Color("a7dcd0"))
+	status_label.name = "StatusLabel"
+	status_label.billboard = BaseMaterial3D.BILLBOARD_DISABLED
+	status_label.font_size = 44
+	status_label.pixel_size = 0.0032
+	status_label.outline_size = 6
+	status_label.rotation = Vector3.ZERO  # 竖直朝 +z，与机箱前面板同向
+
+	# ── 上传扫描条（upload 时亮起的一道光带，沿面板前缘水平扫动）──
+	var scan_mat := StandardMaterial3D.new()
+	scan_mat.albedo_color = Color("54c9ff")
+	scan_mat.emission_enabled = true
+	scan_mat.emission = Color("54c9ff")
+	scan_mat.emission_energy_multiplier = 2.0
+	var scan_bar := box(rig, Vector3(-0.55, 0.245, 0.24), Vector3(0.08, 0.018, 0.02), scan_mat)
+	scan_bar.name = "ScanBar"
+	scan_bar.visible = false
+
+	relay_rigs.append({
+		"node": rig,
+		"phase": phase,
+		"lamp_mats": lamp_mats,
+		"switch_arm": switch_arm,
+		"port_mats": port_mats,
+		"status_label": status_label,
+		"scan_bar": scan_bar,
+		"scan_active": false,
+		"scan_time": 0.0,
+	})
+
+
+# game.gd 在状态变化时调用：solved/armed/patched/upload/cleared 与 game.relay_status 同语义
+func update_relay_state(solved: bool, armed: bool, patched: bool, upload: float, cleared: bool) -> void:
+	# 颜色常量：绿=已核验 黄=已合闸 青=已外发 蓝=上传中
+	var col_idle := Color("3a4148")
+	var col_solved := Color("69cdc1")   # 晨区主色
+	var col_armed := Color("e79a4c")    # 暖黄
+	var col_patched := Color("6df9d8")  # 亮青
+	var col_upload := Color("54c9ff")   # 蓝
+	for rig in relay_rigs:
+		# 三盏灯：solved / armed / patched
+		var targets := [col_solved if solved else col_idle, col_armed if armed else col_idle, col_patched if patched else col_idle]
+		for i in range(3):
+			var mat: StandardMaterial3D = rig.lamp_mats[i]
+			mat.albedo_color = targets[i]
+			mat.emission = targets[i]
+			mat.emission_energy_multiplier = 1.6 if targets[i] != col_idle else 0.0
+		# 刀开关：armed 后合闸（手柄转到水平）
+		var arm: Node3D = rig.switch_arm
+		arm.rotation.x = -PI / 2.2 if armed else 0.0
+		# 端口：patched 后四个端口亮起
+		for pm in rig.port_mats:
+			var m: StandardMaterial3D = pm
+			if patched:
+				m.albedo_color = col_patched
+				m.emission = col_patched
+				m.emission_energy_multiplier = 1.2
+			elif armed:
+				m.albedo_color = col_armed
+				m.emission = col_armed
+				m.emission_energy_multiplier = 0.5
+			else:
+				m.albedo_color = Color("2a3036")
+				m.emission = Color("0a0d10")
+				m.emission_energy_multiplier = 0.0
+		# 文字：复用 game.relay_status 的语义（精简版）
+		var label: Label3D = rig.status_label
+		if cleared:
+			label.text = "ACK OK"
+			label.modulate = col_patched
+		elif upload > 0.0:
+			label.text = "TX %.1fs" % upload
+			label.modulate = col_upload
+		elif patched:
+			label.text = "LINKED"
+			label.modulate = col_patched
+		elif armed:
+			label.text = "ARMED"
+			label.modulate = col_armed
+		elif solved:
+			label.text = "VERIFIED"
+			label.modulate = col_solved
+		else:
+			label.text = "IDLE"
+			label.modulate = Color("a7dcd0")
+		# 上传扫描条
+		rig.scan_active = upload > 0.0
+		rig.scan_bar.visible = rig.scan_active
+		rig.scan_time = 0.0
+
+
+# 由 game._physics_process 调用，驱动上传扫描条扫动
+func animate_relay(delta: float) -> void:
+	for rig in relay_rigs:
+		if rig.scan_active:
+			rig.scan_time += delta
+			var t: float = fmod(rig.scan_time * 1.6, 1.0)
+			rig.scan_bar.position.x = -0.55 + t * 1.10
+
 
 func build_witness(layer: Node3D, center: Vector3) -> void:
 	var figure := Node3D.new()

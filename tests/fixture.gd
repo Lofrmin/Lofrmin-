@@ -12,6 +12,8 @@ class MemoryProfile extends Node:
 class MemoryExterior extends Node3D:
 	func animate(_seconds: float) -> void:
 		pass
+	func animate_window(_seconds: float) -> void:
+		pass
 	func finish() -> void:
 		pass
 
@@ -54,3 +56,10 @@ func _physics_process(_delta: float) -> void:
 
 func tick_game_physics(delta: float) -> void:
 	super._physics_process(delta)
+
+
+# P1 修复 3：显式驱动中继动画，与正式 game._process 中 animate_relay 等价
+# 不走完整 super._process，避免 fixture 中 optics 等字段为 null 的副作用
+func tick_game_process(delta: float) -> void:
+	if mode == "world":
+		station.animate_relay(delta)
