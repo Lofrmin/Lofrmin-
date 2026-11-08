@@ -16,14 +16,14 @@ func load_settings() -> void:
 	for field in AUDIO_FIELDS:
 		set(field, valid_volume(config.get_value("audio", field, 1.0)))
 	var count: Variant = config.get_value("gameplay", "hunter_count", 1)
-	hunter_count = int(count) if (count is int or count is float) and count in [1, 2] else 1
+	hunter_count = int(count) if (count is int or count is float) and count in [1, 2, 3] else 1
 
 func save_settings() -> Error:
 	var config := ConfigFile.new()
 	for field in AUDIO_FIELDS:
 		set(field, valid_volume(get(field)))
 		config.set_value("audio", field, get(field))
-	hunter_count = hunter_count if hunter_count in [1, 2] else 1
+	hunter_count = hunter_count if hunter_count in [1, 2, 3] else 1
 	config.set_value("gameplay", "hunter_count", hunter_count)
 	return config.save(PATH)
 

@@ -23,6 +23,8 @@ var hunter_step: AudioStreamPlayer3D
 var player_distance := 0.0
 var hunter_distance := 0.0
 var alternate := false
+var alert_layers: Dictionary = {}
+const BUS_GAIN_DB := {"CorrMaster":0.0,"CorrEffects":6.0,"CorrAlerts":6.0,"CorrAmbience":8.0}
 
 func ensure_audio_buses() -> void:
 	for bus in ["CorrMaster", "CorrEffects", "CorrAlerts", "CorrAmbience"]:
@@ -30,6 +32,12 @@ func ensure_audio_buses() -> void:
 			AudioServer.add_bus()
 			AudioServer.set_bus_name(AudioServer.bus_count - 1, bus)
 		AudioServer.set_bus_send(AudioServer.get_bus_index(bus), "Master" if bus == "CorrMaster" else "CorrMaster")
+	var master := AudioServer.get_bus_index("CorrMaster")
+	if AudioServer.get_bus_effect_count(master)==0:
+		var limiter:=AudioEffectLimiter.new()
+		limiter.ceiling_db=-1.0
+		limiter.threshold_db=-3.0
+		AudioServer.add_bus_effect(master,limiter)
 
 func set_audio_levels(master: float, effects: float, alerts: float, ambience: float) -> void:
 	ensure_audio_buses()
@@ -38,7 +46,7 @@ func set_audio_levels(master: float, effects: float, alerts: float, ambience: fl
 		var level: float = clampf(levels[bus], 0.0, 1.0) if is_finite(levels[bus]) else 1.0
 		var index := AudioServer.get_bus_index(bus)
 		AudioServer.set_bus_mute(index, level <= 0.0)
-		AudioServer.set_bus_volume_db(index, linear_to_db(level) if level > 0.0 else -80.0)
+		AudioServer.set_bus_volume_db(index, linear_to_db(level)+BUS_GAIN_DB[bus] if level > 0.0 else -80.0)
 
 func setup(hunter: Node3D) -> void:
 	ensure_audio_buses()
@@ -77,9 +85,18 @@ func setup(hunter: Node3D) -> void:
 	player_step.bus = "CorrEffects"
 	player_step.volume_db = -21.0
 	add_child(player_step)
+	# The ship alarm remains audible beyond the 18m spatial source range; positional cues stay intact.
+	for key in ["warning","deploy"]:
+		var alert:=AudioStreamPlayer.new()
+		alert.stream=CLIPS[key]
+		alert.bus="CorrAlerts"
+		alert.volume_db=-6.0
+		add_child(alert)
+		alert_layers[key]=alert
 
 func cue(key: String) -> void:
 	cues[key].play()
+	if alert_layers.has(key): alert_layers[key].play()
 
 func update_chase(delta: float, threat: float, active: bool) -> void:
 	if active:
@@ -129,3 +146,4 @@ func quiet() -> void:
 	chase.volume_db = CHASE_SILENT_DB
 	for voice in cues.values():
 		voice.stop()
+	for voice in alert_layers.values(): voice.stop()

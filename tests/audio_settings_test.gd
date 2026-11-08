@@ -36,7 +36,7 @@ func run() -> void:
 		check(AudioServer.is_bus_mute(AudioServer.get_bus_index(sound.cues.warning.bus)), "zero alert level mutes")
 		check(sound.cues.warning.bus == sound.cues.deploy.bus and sound.cues.warning.bus != sound.hunter_step.bus, "alerts separate from footsteps")
 		check(sound.chase.bus != sound.player_step.bus, "ambience separate from effects")
-		check(is_equal_approx(AudioServer.get_bus_volume_db(AudioServer.get_bus_index(sound.player_step.bus)), linear_to_db(0.25)), "effects gain applied at bus")
+		check(is_equal_approx(AudioServer.get_bus_volume_db(AudioServer.get_bus_index(sound.player_step.bus)), linear_to_db(0.25)+6.0), "effects gain applied at bus")
 		check(is_equal_approx(AudioServer.get_bus_volume_db(AudioServer.get_bus_index("CorrMaster")), linear_to_db(0.5)), "master gain applied")
 		for i in range(4): sound.player_moved(Vector3.ZERO, Vector3(0.5,0,0), true, true)
 		sound.update_chase(1.0, 1.0, true)
@@ -79,7 +79,7 @@ func run() -> void:
 			ui.queue_redraw()
 			await process_frame
 			await process_frame
-			for action in ["setting_master_down", "setting_master_up", "setting_effects_down", "setting_effects_up", "setting_alert_down", "setting_alert_up", "setting_ambience_down", "setting_ambience_up", "setting_hunters_1", "setting_hunters_2", "settings_back"]:
+			for action in ["setting_master_down", "setting_master_up", "setting_effects_down", "setting_effects_up", "setting_alert_down", "setting_alert_up", "setting_ambience_down", "setting_ambience_up", "setting_hunters_1", "setting_hunters_2", "setting_hunters_3", "settings_back"]:
 				check(ui.hit_regions.has(action), "settings has " + action)
 			var args := OS.get_cmdline_user_args()
 			if not args.is_empty():

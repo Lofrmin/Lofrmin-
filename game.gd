@@ -451,7 +451,7 @@ func handle_action(action: String) -> void:
 		if mode != "settings": return
 		var field := action.get_slice("_", 1)
 		if field == "hunters":
-			options.hunter_count = clampi(int(action.get_slice("_",2)),1,2)
+			options.hunter_count = clampi(int(action.get_slice("_",2)),1,3)
 		elif field in ["master","effects","alert","ambience"]:
 			var property := field + "_volume"
 			var change := 0.1 if action.get_slice("_",2) == "up" else -0.1
@@ -1308,7 +1308,7 @@ func shift(tile: Vector2i) -> void:
 	else:
 		boss.hide()
 		threat = 0.0
-	say("晨区暂时安全。回 A-01 归档、核验记录。" if phase == 0 else "暮区有清算单位巡逻。听脚步、绕开视线，别在门口久留。")
+	say("晨区暂时安全。回 A-01 归档、核验记录。" if phase == 0 else "暮区已部署 %d/%d 名追债人。%s 听脚步与警报，别在门口久留。" % [(1 if boss_live else 0)+extra_hunters.size(),lap_hunter_count,hunter_spawn_report])
 
 
 var previous_spawn := Vector2i(-1,-1)
@@ -1364,6 +1364,7 @@ func activate_boss(tile: Vector2i) -> void:
 	path_timer = 0.0
 	boss_stall_time = 0.0
 	boss_route.clear()
+	deploy_extra_hunters()
 	sound.cue("deploy")
 
 
@@ -1661,10 +1662,10 @@ func threat_text() -> String:
 	var prefix := "%d 名追债人 · " % count
 	var active_stun: float = stunned if nearest == boss else nearest.stunned
 	var warning: float = charge_warning if nearest == boss else nearest.charge_warning
-	if active_stun > 0.0: return prefix + "最近失相 %.1f s" % active_stun
-	if warning > 0.0: return prefix + "最近准备冲刺"
+	if active_stun > 0.0: return prefix + "已失相 %.1f s" % active_stun
+	if warning > 0.0: return prefix + "准备冲刺"
 	if gate_lock > 0.0: return prefix + "警报精确追踪"
-	return prefix + "最近 %.0f m" % nearest.position.distance_to(player.position)
+	return prefix + "注意脚步与警报"
 
 
 func reset_lap(message: String) -> void:

@@ -141,9 +141,10 @@ func draw_settings() -> void:
 		button(Rect2(812,y,72,38),"setting_"+row[0]+"_down","−",MINT)
 		button(Rect2(902,y,72,38),"setting_"+row[0]+"_up","+",MINT)
 	write(Vector2(280,505), "追债人数量", 18)
-	button(Rect2(452,477,230,40),"setting_hunters_1","[选中] 1 名 · 标准" if game.options.hunter_count == 1 else "1 名 · 标准", MINT if game.options.hunter_count == 1 else DIM)
-	button(Rect2(704,477,270,40),"setting_hunters_2","[选中] 2 名 · 加压" if game.options.hunter_count == 2 else "2 名 · 加压", AMBER if game.options.hunter_count == 2 else DIM)
-	write(Vector2(280,548), "人数在下一轮调查生效，不改变本轮已部署的追债人。", 15, DIM)
+	for count in [1,2,3]:
+		button(Rect2(452+(count-1)*176,477,164,40),"setting_hunters_%d" % count,("[选中] " if game.options.hunter_count == count else "")+"%d 名" % count,MINT if game.options.hunter_count == count else DIM)
+	var active_count: Variant = game.get("lap_hunter_count")
+	write(Vector2(280,548), "本轮 %d 名 / 下轮 %d 名 · 安全位置不足时少部署" % [int(active_count) if active_count!=null else 1,game.options.hunter_count], 15, DIM)
 	var settings_notice: Variant = game.get("settings_notice")
 	write(Vector2(280,575), str(settings_notice) if settings_notice != null and not str(settings_notice).is_empty() else "设置独立保存，不会清除章节与证据。", 14, AMBER if settings_notice != null and not str(settings_notice).is_empty() else DIM)
 	button(Rect2(732,596,242,38),"settings_back","Esc / Enter  返回")
