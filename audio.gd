@@ -2,6 +2,7 @@ extends Node
 
 const CHASE_SILENT_DB := -48.0
 const CHASE_LOOP_SOURCE: AudioStreamWAV = preload("res://assets/audio/chase_loop.wav")
+const EXPLORATION_SOURCE := preload("res://assets/audio/exploration_loop.ogg")
 const CLIPS := {
 	"step_a": preload("res://assets/audio/step_a.wav"),
 	"step_b": preload("res://assets/audio/step_b.wav"),
@@ -24,6 +25,7 @@ var player_distance := 0.0
 var hunter_distance := 0.0
 var alternate := false
 var alert_layers: Dictionary = {}
+var music: AudioStreamPlayer
 const BUS_GAIN_DB := {"CorrMaster":0.0,"CorrEffects":6.0,"CorrAlerts":6.0,"CorrAmbience":8.0}
 
 func ensure_audio_buses() -> void:
@@ -50,6 +52,12 @@ func set_audio_levels(master: float, effects: float, alerts: float, ambience: fl
 
 func setup(hunter: Node3D) -> void:
 	ensure_audio_buses()
+	music=AudioStreamPlayer.new()
+	music.stream=EXPLORATION_SOURCE.duplicate()
+	music.stream.loop=true
+	music.bus="CorrAmbience"
+	music.volume_db=-48.0
+	add_child(music)
 	chase_loop = CHASE_LOOP_SOURCE.duplicate() as AudioStreamWAV
 	chase_loop.loop_mode = AudioStreamWAV.LOOP_FORWARD
 	chase_loop.loop_end = chase_loop.data.size() / 2
@@ -98,6 +106,15 @@ func cue(key: String) -> void:
 	cues[key].play()
 	if alert_layers.has(key): alert_layers[key].play()
 
+func update_music(delta: float, active: bool, danger: bool) -> void:
+	if not active:
+		music.stop()
+		music.volume_db=-48.0
+		return
+	if not music.playing: music.play()
+	var target := -38.0 if danger else -15.0
+	music.volume_db=move_toward(music.volume_db,target,maxf(delta,0.0)*12.0)
+
 func update_chase(delta: float, threat: float, active: bool) -> void:
 	if active:
 		if not chase.playing:
@@ -139,6 +156,8 @@ func hunter_moved(before: Vector3, after: Vector3, audible: bool) -> void:
 		hunter_step.play()
 
 func quiet() -> void:
+	music.stop()
+	music.volume_db=-48.0
 	player_distance = 0.0
 	hunter_distance = 0.0
 	player_step.stop()

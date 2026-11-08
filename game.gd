@@ -11,6 +11,8 @@ var options := Preferences.new()
 var settings_return := "menu"
 var settings_notice := ""
 var lap_hunter_count := 1
+var hunter_intro_seen := false
+const Prologue := preload("res://prologue.gd")
 const HunterAgent := preload("res://hunter_agent.gd")
 const HUNTER_SPAWN_MIN := 8.0
 const HUNTER_SPAWN_MAX := 16.0
@@ -134,6 +136,7 @@ var tactic := "patrol"
 var tactic_gate := 0
 var tactic_source := "rules"
 var sound: Node
+var prologue: CanvasLayer
 var optics: ShaderMaterial
 
 
@@ -238,6 +241,7 @@ func build_boss() -> void:
 
 
 func _process(delta: float) -> void:
+	sound.update_music(delta,mode in ["menu","intro","world"],mode=="world" and (threat>0.35 or any_hunter_chasing()))
 	boss_rig.animation.active = mode == "world" and boss_live and boss.visible
 	for hunter in extra_hunters:
 		hunter.rig.animation.active = mode == "world" and hunter.live and hunter.visible
@@ -271,6 +275,24 @@ func begin_intro() -> void:
 	set_mode("intro")
 
 
+func begin_prologue() -> void:
+	if prologue == null:
+		prologue = Prologue.new()
+		add_child(prologue)
+		prologue.video.bus = "CorrAmbience"
+		prologue.video.volume_db = -8.0
+		prologue.finished.connect(finish_prologue)
+	set_mode("cinematic")
+	if not prologue.play():
+		# A missing media file must never block a new investigation.
+		begin_intro()
+
+
+func finish_prologue() -> void:
+	if mode == "cinematic":
+		begin_intro()
+
+
 func advance_intro() -> void:
 	if mode != "intro": return
 	if intro_page < 2:
@@ -286,6 +308,7 @@ func _physics_process(delta: float) -> void:
 	shift_cooldown = maxf(0.0, shift_cooldown - delta)
 	gate_lock = maxf(0.0, gate_lock - delta)
 	update_field_task(delta)
+	if mode != "world": return
 	var move := Vector2(float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A)), float(Input.is_physical_key_pressed(KEY_S)) - float(Input.is_physical_key_pressed(KEY_W)))
 	var direction := player.basis * Vector3(move.x, 0, move.y).normalized()
 	var shift_held := Input.is_physical_key_pressed(KEY_SHIFT)
@@ -341,6 +364,17 @@ func _physics_process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if mode == "hunter_intro":
+		if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode in [KEY_ENTER,KEY_SPACE,KEY_ESCAPE]:
+			acknowledge_hunters()
+		elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			if interface.button_at(event.position) == "ack_hunters": acknowledge_hunters()
+		return
+	if mode == "cinematic":
+		if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode in [KEY_SPACE, KEY_ESCAPE]:
+			prologue.finish()
+			get_viewport().set_input_as_handled()
+		return
 	if event is InputEventMouseMotion and mode == "world" and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		player.rotate_y(-event.relative.x * 0.00235)
 		camera.rotation.x = clampf(camera.rotation.x - event.relative.y * 0.00235, -1.35, 1.35)
@@ -468,6 +502,7 @@ func handle_action(action: String) -> void:
 			set_mode("settings")
 		"settings_back":
 			if mode == "settings": set_mode(settings_return)
+		"ack_hunters": acknowledge_hunters()
 		"start":
 			if mode == "intro": start_game()
 		"continue":
@@ -479,7 +514,8 @@ func handle_action(action: String) -> void:
 				set_mode("restart_confirm")
 			else:
 				fresh_investigation = true
-				begin_intro()
+				hunter_intro_seen = false
+				begin_prologue()
 		"intro_next": advance_intro()
 		"controls":
 			if mode in ["menu", "world", "paused"]:
@@ -509,6 +545,7 @@ func handle_action(action: String) -> void:
 		"cancel_restart": set_mode(restart_return)
 		"restart_case":
 			if mode == "restart_confirm":
+				hunter_intro_seen = false
 				fresh_investigation = true
 				chapter = 0
 				laps = 0
@@ -519,7 +556,7 @@ func handle_action(action: String) -> void:
 				tactic = "patrol"
 				tactic_source = "rules"
 				reset_lap("新调查已建立。前往晨区 B-17。")
-				if restart_return == "menu": begin_intro()
+				begin_prologue()
 		"quit": get_tree().quit()
 		_:
 			if action.begins_with("timeline_digit_"):
@@ -535,6 +572,9 @@ func handle_action(action: String) -> void:
 
 
 func set_mode(next: String) -> void:
+	if mode == "cinematic" and next != "cinematic" and prologue != null:
+		prologue.stop()
+	get_viewport().disable_3d = next == "cinematic"
 	boss_rig.animation.active = next == "world" and boss_live and boss.visible
 	for hunter in extra_hunters:
 		hunter.rig.animation.active = next == "world" and hunter.live and hunter.visible
@@ -813,6 +853,17 @@ func deploy_after_submission() -> void:
 	focus_hunter_audio(nearest_hunter())
 	sound.cue("deploy")
 	say(notice + "\n安全点部署共 %d 名追债人；换相门封锁 %.0f 秒。%s" % [1 + extra_hunters.size(), gate_lock, hunter_spawn_report])
+	show_hunter_intro()
+
+func show_hunter_intro() -> void:
+	if mode != "world" or hunter_intro_seen or not boss_live or extra_hunters.is_empty(): return
+	hunter_intro_seen = true
+	set_mode("hunter_intro")
+
+func acknowledge_hunters() -> void:
+	if mode != "hunter_intro": return
+	set_mode("world")
+	sound.cue("deploy")
 
 
 func clear_extra_hunters() -> void:
@@ -1366,6 +1417,7 @@ func activate_boss(tile: Vector2i) -> void:
 	boss_route.clear()
 	deploy_extra_hunters()
 	sound.cue("deploy")
+	show_hunter_intro()
 
 
 func stop_dusk_chase() -> void:

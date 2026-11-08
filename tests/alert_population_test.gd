@@ -11,6 +11,7 @@ func check(ok:bool,label:String) -> void:
 func run() -> void:
 	var game:Node3D=load("res://tests/fixture.gd").new()
 	root.add_child(game)
+	game.hunter_intro_seen=true
 	game.set_mode("menu")
 	game.handle_action("settings")
 	game.handle_action("setting_hunters_3")

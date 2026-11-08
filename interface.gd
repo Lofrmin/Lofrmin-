@@ -1,5 +1,6 @@
 extends Control
 
+const MENU_COVER := preload("res://assets/ui/menu_cover.png")
 const MINT := Color("a7dcd0")
 const AMBER := Color("edbe87")
 const WHITE := Color("eeeee7")
@@ -35,8 +36,12 @@ func _draw() -> void:
 		return
 	hit_regions.clear()
 	pointer = get_global_mouse_position() * Vector2(1280, 720) / size
+	if game.mode in ["menu", "intro"] or (game.mode == "controls" and game.controls_return == "menu") or (game.mode == "restart_confirm" and game.restart_return == "menu"):
+		draw_menu_cover()
 	draw_set_transform(Vector2.ZERO, 0.0, size / Vector2(1280, 720))
 	match game.mode:
+		"hunter_intro": draw_hunter_intro()
+		"cinematic": pass
 		"menu": draw_menu()
 		"controls": draw_controls()
 		"settings": draw_settings()
@@ -47,8 +52,28 @@ func _draw() -> void:
 		_: draw_hud()
 
 
+func draw_menu_cover() -> void:
+	# Crop from the center to fill the window without stretching the supplied art.
+	var image_size := MENU_COVER.get_size()
+	var scale_factor := maxf(size.x / image_size.x, size.y / image_size.y)
+	var source_size := size / scale_factor
+	var source := Rect2((image_size - source_size) * 0.5, source_size)
+	draw_texture_rect_region(MENU_COVER, Rect2(Vector2.ZERO, size), source)
+
+
 func write(at: Vector2, message: String, font_size: int, color: Color = WHITE) -> void:
 	draw_string(font, at, message, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, color)
+
+func draw_hunter_intro() -> void:
+	draw_rect(Rect2(0,0,1280,720),Color(0.008,0.016,0.024,0.88))
+	slab(Rect2(220,145,840,430),AMBER,0.98)
+	write(Vector2(268,205),"清算警报 / 首次遭遇",18,AMBER)
+	write(Vector2(268,269),"追债人来了",40,WHITE)
+	write(Vector2(268,325),"暮区已部署 %d 名。先读完提示，世界正暂停。" % (1+game.extra_hunters.size()),20)
+	write(Vector2(268,373),"Shift 短冲刺拉开距离；耗尽后松开，恢复至 25% 再按。",17,DIM)
+	write(Vector2(268,412),"F：同区、无遮挡时打断附近追债人，每轮两次。",17,DIM)
+	write(Vector2(268,451),"听警报和脚步，利用转角；封锁结束后可改走另一扇 G 门。",17,DIM)
+	button(Rect2(665,502,345,46),"ack_hunters","Enter / Space  明白，继续行动",AMBER)
 
 
 func text_lines(message: String, width: float, font_size: int) -> PackedStringArray:
@@ -98,7 +123,11 @@ func button(rect: Rect2, action: String, caption: String, color: Color = MINT) -
 func draw_menu() -> void:
 	var shade := Color(0.008, 0.019, 0.027)
 	var curtain := PackedVector2Array([Vector2.ZERO, Vector2(720,0), Vector2(720,720), Vector2(0,720)])
-	draw_polygon(curtain, PackedColorArray([alpha(shade,0.96), alpha(shade,0.15), alpha(shade,0.15), alpha(shade,0.96)]))
+	draw_polygon(curtain, PackedColorArray([alpha(shade,0.45), alpha(shade,0.0), alpha(shade,0.0), alpha(shade,0.45)]))
+	var top := PackedVector2Array([Vector2.ZERO, Vector2(1280,0), Vector2(1280,105), Vector2(0,105)])
+	draw_polygon(top, PackedColorArray([alpha(shade,0.62), alpha(shade,0.62), alpha(shade,0.0), alpha(shade,0.0)]))
+	var footer := PackedVector2Array([Vector2(0,603), Vector2(1280,603), Vector2(1280,720), Vector2(0,720)])
+	draw_polygon(footer, PackedColorArray([alpha(shade,0.0), alpha(shade,0.0), alpha(shade,0.84), alpha(shade,0.84)]))
 	code(Vector2(64,63), "C O R R I D O R   /   CASE ARCHIVE", 13)
 	code(Vector2(1065,63), "PANDA JAM / CYCLE", 11, DIM)
 	write(Vector2(60,171), "回廊", 80)

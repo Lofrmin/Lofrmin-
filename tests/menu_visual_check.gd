@@ -20,6 +20,10 @@ func run() -> void:
 		await click("controls_back")
 		if game.mode != "menu": failed = true
 		await click("new_case")
+		if game.mode != "cinematic": failed = true
+		await create_timer(2.0).timeout
+		await capture("prologue-%d" % resolution.x)
+		game.prologue.skip_button.pressed.emit()
 		await capture("intro-%d" % resolution.x)
 		await click("intro_next")
 		await click("intro_next")

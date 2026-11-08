@@ -14,6 +14,7 @@ func _initialize() -> void:
 	call_deferred("run")
 
 func dusk(tile: Vector2i) -> void:
+	game.hunter_intro_seen=true # Tutorial behavior has its own test; exercise actor physics here.
 	game.stop_dusk_chase()
 	game.phase = 1
 	game.map_phase = 1
