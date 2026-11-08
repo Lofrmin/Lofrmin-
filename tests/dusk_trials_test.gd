@@ -115,11 +115,13 @@ func verify_relay() -> void:
 	trial.begin("relay", station)
 	check(not trial.interact(station.point(station.GATES[0])), "remote E cannot activate power post")
 	trial.interact(approach(1))
-	check(trial.progress == 0, "wrong first post resets")
+	check(trial.progress == 1 and trial.relay_timers[1] > 0.0, "any post can start first")
+	trial.update(0.5, approach(1), false)
+	var lit_remaining: float = trial.relay_timers[1]
+	trial.interact(approach(1))
+	check(trial.progress == 1 and trial.relay_timers[1] == lit_remaining and trial.relay_activation_events.size() == 1, "repeated lit post neither renews nor emits")
 	trial.interact(approach(0))
-	trial.interact(approach(2))
-	check(trial.progress == 0 and not trial.completed, "wrong next post resets all")
-	trial.interact(approach(0))
+	check(trial.progress == 2 and not trial.completed, "another post adds independent power without ordering")
 	trial.update(1, approach(0), false, 0)
 	check(trial.progress == 0 and not trial.completed, "phase exit resets unfinished operation")
 	for body in trial._bodies:

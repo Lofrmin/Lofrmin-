@@ -23,6 +23,14 @@ func run() -> void:
 		return
 	game.chapter = 3
 	game.set_mode("audit")
+	game.evidence = [true,true,true]
+	check(game.evidence_lines()[2].contains("1 晨秒 = 1000 暮秒"), "protocol states the unit relation without supplying the conversion")
+	game.submit_timeline()
+	check(game.chapter == 3 and game.notice.contains("换算栏尚未填写"), "empty conversion receives actionable feedback")
+	game.timeline_key("5")
+	game.submit_timeline()
+	check(game.chapter == 3 and game.notice.contains("排序尚未完成"), "incomplete ranking receives separate feedback")
+	game.timeline_seconds = ""
 	game.evidence = [true,false,true]
 	game.timeline_key("5")
 	game.pick_timeline("debit")
@@ -76,14 +84,14 @@ func run() -> void:
 	key.pressed = true
 	key.physical_keycode = KEY_5
 	game._input(key)
-	key.physical_keycode = KEY_UP
-	game._input(key)
 	key.physical_keycode = KEY_DOWN
+	game._input(key)
+	key.physical_keycode = KEY_UP
 	game._input(key)
 	key.physical_keycode = KEY_ENTER
 	game._input(key)
 	check(game.chapter == 1, "physical number, arrow and Enter controls submit timeline")
-	for caption in ["点选排序｜暮区扣款名单5000s", "1｜暮区扣款名单5000s", "2｜晨区寻人立案6s", "Enter  核验换算与顺序"]:
+	for caption in ["待排｜↓ 扣款名单 · 5000暮秒", "1｜↓ 扣款名单 · 5000暮秒", "2｜↑ 寻人立案 · 6晨秒", "Enter  核验推理"]:
 		var limit := 201.0 if caption.begins_with("Enter") else 339.0
 		check(game.interface.font.get_string_size(caption,HORIZONTAL_ALIGNMENT_LEFT,-1,16).x <= limit, "timeline button text fits: " + caption)
 	game.free()

@@ -130,10 +130,10 @@ func run() -> void:
 	game.boss_phase = 1
 	game.boss.position = first_spawn
 	game.begin_upload()
-	check(is_equal_approx(game.upload, 6.0), "final upload still lasts six seconds")
-	check(not game.boss_live and not game.boss_chasing and not game.boss.visible, "upload keeps Morning free of hunters")
-	check(game.boss_route.is_empty() and is_zero_approx(game.threat), "upload clears chase routes and HUD threat")
-	check(not game.sound.chase.playing, "upload does not start chase ambience")
+	check(is_equal_approx(game.upload, 30.0), "final upload lasts thirty seconds")
+	check(game.boss_live and game.boss_chasing and game.boss.visible and game.boss_phase == 0, "upload deploys a morning pursuer")
+	check(game.boss_route.is_empty() and is_zero_approx(game.threat), "upload clears stale dusk routes and threat before new encounter")
+	check(not game.sound.chase.playing, "chase ambience waits for the next physics update")
 	game.upload = 4.5
 	game.set_mode("audit")
 	game.begin_upload()

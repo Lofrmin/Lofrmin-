@@ -76,7 +76,7 @@ func run() -> void:
 	game.solved = true
 	game.armed = true
 	game.patched = true
-	game.upload = 6.0
+	game.upload = 30.0
 	game.sync_relay_visual()
 	var rig: Dictionary = game.station.relay_rigs[0]
 	var bar: MeshInstance3D = rig.scan_bar
@@ -108,12 +108,12 @@ func run() -> void:
 	game.tick_game_process(0.1)
 	check(is_equal_approx(bar.position.x, x_paused), "scan bar frozen when paused")
 
-	# 恢复 world，让 upload 跑完（6 秒，每次 0.1 tick 共 70 tick 后应 <=0）
+	# 恢复 world，让三十秒 upload 跑完。
 	game.set_mode("world")
-	for i in range(70):
+	for i in range(310):
 		game.tick_game_physics(0.1)
 		game.tick_game_process(0.1)
-	check(game.upload <= 0.0, "upload finished after ~7s of physics ticks")
+	check(game.upload <= 0.0, "upload finished after thirty seconds of physics ticks")
 	check(game.cleared, "cleared set after upload completed")
 	check(not bar.visible, "scan bar hidden after upload finished")
 	for r in game.station.relay_rigs:

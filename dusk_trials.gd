@@ -10,6 +10,12 @@ const WALK_LIMIT := 5.15
 const BASE_SIZE := Vector3(0.58, 0.94, 0.58)
 const SITE_OFFSET := Vector3(0.90, 0, 0.90)
 const KINDS := ["silent", "clock", "relay"]
+# Mirrored from game.gd; relay_power_test verifies these stay in sync.
+# Avoid loading game.gd here: it preloads this script and every scene asset.
+const RELAY_WALK_SPEED := 4.45
+const RELAY_STAMINA_MAX := 100.0
+const RELAY_STAMINA_REGEN_RATE := 100.0 / 6.0
+const RELAY_STAMINA_REGEN_DELAY := 1.25
 
 var active := false
 var completed := false
@@ -19,6 +25,9 @@ var sites: Array[Dictionary] = []
 var progress := 0
 var remaining := 0.0
 var time_limit := 0.0
+# Zero-based site indices. The world consumes and clears this queue after E.
+var relay_activation_events: Array[int] = []
+var relay_timers: Array[float] = []
 var message := ""
 var station: Node3D
 var visual_root: Node3D
@@ -51,9 +60,10 @@ func begin(task: String, map: Node3D, phase: int = 1) -> bool:
 	var tiles: Array[Vector2i] = []
 	if kind == "clock":
 		tiles = _switch_pair()
+	elif kind == "relay":
+		tiles = _relay_sites()
 	else:
-		var offsets: Array = [Vector2i(0, 1), Vector2i(2, 2), Vector2i(-1, 3)] if kind == "silent" else [Vector2i(-2, 0), Vector2i(1, 2), Vector2i(2, -1)]
-		for offset in offsets:
+		for offset in [Vector2i(0, 1), Vector2i(2, 2), Vector2i(-1, 3)]:
 			var tile := _pick_tile(anchor + offset, tiles)
 			if tile == Vector2i(-1, -1):
 				clear()
@@ -61,8 +71,9 @@ func begin(task: String, map: Node3D, phase: int = 1) -> bool:
 				return false
 			tiles.append(tile)
 	if tiles.size() != (2 if kind == "clock" else 3):
+		var reason := "地图中没有三处安全供电场地，未解锁终端。" if kind == "relay" else "双开关附近没有安全绕行路线，未解锁终端。"
 		clear()
-		message = "双开关附近没有安全绕行路线，未解锁终端。"
+		message = reason
 		return false
 	for index in range(tiles.size()):
 		var pos: Vector3 = station.point(tiles[index])
@@ -73,6 +84,9 @@ func begin(task: String, map: Node3D, phase: int = 1) -> bool:
 		var detour: Array = station.path(1, tiles[0], tiles[1])
 		# Comfortable at the game's 6.25 m/s sprint, including corners and E presses.
 		time_limit = maxf(9.0, float(detour.size() - 1) * station.CELL / 4.45 + 4.0)
+	elif kind == "relay":
+		relay_timers.assign([0.0, 0.0, 0.0])
+		_budget_relay_lifetime()
 	active = true
 	_phase = 1
 	_build_visuals()
@@ -88,14 +102,23 @@ func update(delta: float, player_position: Vector3, sprinting: bool, phase: int 
 	_phase = phase
 	_set_enabled(phase == 1)
 	if phase != 1:
-		if not completed and (armed or progress > 0):
+		if not completed and (kind == "relay" or armed or progress > 0):
 			_reset_attempt("已离开暮区；返回后可重新开始。")
 		_has_position = false
 		return false
 	var was_complete := completed
 	var elapsed := maxf(delta, 0.0)
 	if not completed and elapsed > 0.0:
-		if kind == "clock" and progress == 1:
+		if kind == "relay":
+			var expired := false
+			for index in range(relay_timers.size()):
+				var was_lit := relay_timers[index] > 0.0
+				relay_timers[index] = maxf(0.0, relay_timers[index] - elapsed)
+				expired = expired or (was_lit and relay_timers[index] <= 0.0)
+			_sync_relay_progress()
+			if expired:
+				message = "有电源柱熄灭；可重新启动。让三柱同时供电。"
+		elif kind == "clock" and progress == 1:
 			remaining = maxf(0.0, remaining - elapsed)
 			if remaining <= 0.0:
 				_reset_attempt("同步窗口超时。回到开关 1 重试；通道保持开放。")
@@ -149,14 +172,16 @@ func interact(player_position: Vector3, phase: int = 1) -> bool:
 		else:
 			message = "先到开关 1 合闸，再沿箭头绕到此处。"
 	else:
-		if index == progress:
-			progress += 1
+		if relay_timers[index] <= 0.0:
+			relay_timers[index] = time_limit
+			relay_activation_events.append(index)
+			_sync_relay_progress()
 			if progress == sites.size():
 				_complete()
 			else:
-				message = "电源 %d / 3 已重启；前往下一根闪光电源柱。" % progress
+				message = "电源柱 %d 已供电；三柱须同时亮起。每柱供电 %.0f 秒，小地图可查看位置。" % [index + 1, time_limit]
 		else:
-			_reset_attempt("接通顺序不对，保护器已复位。沿箭头从电源 1 重新开始。")
+			message = "此柱正在供电，剩余 %.1f 秒；重复按键不会延长。" % relay_timers[index]
 	_last_target = -999
 	_refresh()
 	return true
@@ -185,6 +210,8 @@ func clear() -> void:
 	time_limit = 0.0
 	message = ""
 	sites.clear()
+	relay_timers.clear()
+	relay_activation_events.clear()
 	_lamps.clear()
 	_labels.clear()
 	_lights.clear()
@@ -200,7 +227,7 @@ func instructions() -> String:
 	match kind:
 		"silent": return "声控通行：到 1 号感应线按 E，步行通过 2、3 号线；奔跑重置。"
 		"clock": return "双开关同步：开关 1 按 E，再限时绕过设备，到开关 2 按 E。"
-		"relay": return "暗区重启：沿发光指引，到电源柱 1 → 2 → 3 分别按 E。"
+		"relay": return "暗区供电：三柱位置见小地图，任意顺序按 E；每柱供电 %.0f 秒，须同时亮起。每次启动都会引来追债人。" % time_limit
 	return ""
 
 
@@ -214,6 +241,8 @@ func prompt(position: Vector3, phase: int = 1) -> String:
 		return ""
 	if kind == "silent":
 		return "[E] 开始 / 重试静步通行" if index == 0 else "步行穿过下一道感应线"
+	if kind == "relay" and relay_timers[index] > 0.0:
+		return "电源柱 %d · 剩余 %.1f 秒" % [index + 1, relay_timers[index]]
 	return "[E] %s %d" % ["合上同步开关" if kind == "clock" else "重启电源柱", index + 1]
 
 
@@ -224,11 +253,24 @@ func guidance() -> String:
 		return "场地操作已通过 · 返回原终端按 E 取证"
 	if kind == "clock" and progress == 1:
 		return "绕过设备 → 开关 2 · 剩余 %.1f 秒" % remaining
+	if kind == "relay":
+		return "三柱同时供电 %d / 3 · 每柱 %.0f 秒 · 位置见小地图，顺序自选" % [progress, time_limit]
 	return instructions()
 
 
+func map_objectives() -> Array[Dictionary]:
+	var objectives: Array[Dictionary] = []
+	if not active or kind != "relay":
+		return objectives
+	for index in range(sites.size()):
+		objectives.append({"tile": sites[index].tile, "position": sites[index].position,
+			"label": "电源柱 %d" % (index + 1), "active": completed or relay_timers[index] > 0.0,
+			"remaining": relay_timers[index]})
+	return objectives
+
+
 func objective() -> Dictionary:
-	if not active:
+	if not active or kind == "relay":
 		return {}
 	var index := _target_index()
 	return {"task": kind, "tile": anchor if completed else sites[index].tile,
@@ -248,8 +290,12 @@ func _collect_safe_tiles() -> void:
 	for entry in station.breaks_for(1):
 		for tile in entry.tiles:
 			forbidden[tile] = true
-	for y in range(anchor.y - 6, anchor.y + 7):
-		for x in range(anchor.x - 6, anchor.x + 7):
+	var y_start := 0 if kind == "relay" else anchor.y - 6
+	var y_end: int = station.MAP_SIZE.y if kind == "relay" else anchor.y + 7
+	var x_start := 0 if kind == "relay" else anchor.x - 6
+	var x_end: int = station.MAP_SIZE.x if kind == "relay" else anchor.x + 7
+	for y in range(y_start, y_end):
+		for x in range(x_start, x_end):
 			var tile := Vector2i(x, y)
 			if forbidden.has(tile) or not station.walkable(1, tile):
 				continue
@@ -258,7 +304,7 @@ func _collect_safe_tiles() -> void:
 				if station.walkable(1, tile + direction):
 					neighbors += 1
 			var route: Array = station.path(1, anchor, tile)
-			if neighbors >= 2 and route.size() >= 2 and route.size() <= 10:
+			if neighbors >= (3 if kind == "relay" else 2) and route.size() >= 2 and (kind == "relay" or route.size() <= 10):
 				_safe[tile] = true
 
 
@@ -300,6 +346,101 @@ func _switch_pair() -> Array[Vector2i]:
 	return best
 
 
+func _relay_distances(origin: Vector2i) -> Dictionary:
+	# Same four-neighbor graph as station.path, including currently closed lasers.
+	var distances := {origin: 0}
+	var pending: Array[Vector2i] = [origin]
+	var cursor := 0
+	while cursor < pending.size():
+		var at := pending[cursor]
+		cursor += 1
+		for direction in station.DIRECTIONS:
+			var next: Vector2i = at + direction
+			if distances.has(next) or not station.walkable(1, next) or station.laser_grid.blocked(at, next):
+				continue
+			distances[next] = int(distances[at]) + 1
+			pending.append(next)
+	return distances
+
+
+func _relay_has_room(tile: Vector2i) -> bool:
+	# The interaction circle and offset base fit inside a clear 3x3 area.
+	# A straight 12 m lane on BOTH sides leaves a visible spawn side and an exit.
+	for y in range(-1, 2):
+		for x in range(-1, 2):
+			if not station.walkable(1, tile + Vector2i(x, y)):
+				return false
+	for axis in [Vector2i.RIGHT, Vector2i.DOWN]:
+		var clear_lane := true
+		for step in [-3, -2, -1, 1, 2, 3]:
+			var at: Vector2i = tile + axis * step
+			if not station.walkable(1, at) or at in _critical_tiles():
+				clear_lane = false
+		if clear_lane:
+			return true
+	return false
+
+
+func _relay_sites() -> Array[Vector2i]:
+	# Three equal angular sectors, rather than three posts around the terminal.
+	# Shortlists keep graph scoring bounded; every chosen pair is measured by BFS.
+	var preferred := [Vector2i(20, 7), Vector2i(8, 29), Vector2i(32, 29)]
+	var pools: Array[Array] = [[], [], []]
+	for tile: Vector2i in _safe:
+		if not _relay_has_room(tile):
+			continue
+		var sector := 0 if tile.y < 17 else (1 if tile.x < 20 else 2)
+		pools[sector].append(tile)
+	var distances := {}
+	for sector in range(3):
+		var target: Vector2i = preferred[sector]
+		pools[sector].sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+			return a.distance_squared_to(target) < b.distance_squared_to(target))
+		pools[sector] = pools[sector].slice(0, 8)
+		for tile: Vector2i in pools[sector]:
+			distances[tile] = _relay_distances(tile)
+	var best: Array[Vector2i] = []
+	var best_score := INF
+	for first: Vector2i in pools[0]:
+		for second: Vector2i in pools[1]:
+			for third: Vector2i in pools[2]:
+				if minf(first.distance_to(second), minf(second.distance_to(third), third.distance_to(first))) < 18.0:
+					continue
+				var legs := [int(distances[first].get(second, 0)), int(distances[second].get(third, 0)), int(distances[third].get(first, 0))]
+				var shortest: int = legs.min()
+				var longest: int = legs.max()
+				if shortest < 20 or longest > shortest * 1.55:
+					continue
+				var placement := first.distance_squared_to(preferred[0]) + second.distance_squared_to(preferred[1]) + third.distance_squared_to(preferred[2])
+				var score := float(placement) + float(longest - shortest) * 12.0
+				if score < best_score:
+					best_score = score
+					best.assign([first, second, third])
+	return best
+
+
+func _budget_relay_lifetime() -> void:
+	var recovery := RELAY_STAMINA_REGEN_DELAY + RELAY_STAMINA_MAX / RELAY_STAMINA_REGEN_RATE
+	var legs: Array[float] = []
+	for index in range(3):
+		var route: Array = station.path(1, sites[index].tile, sites[(index + 1) % 3].tile)
+		# Centerline path + both offset approaches is a conservative real route.
+		legs.append(float(route.size() - 1) * station.CELL + 2.0 * SITE_OFFSET.length())
+	legs.sort()
+	# Worst two-leg order, all at WALK speed: the 4-second sprint is an escape
+	# reserve, never an assumption of infinite sprint. Add corners, E and recovery.
+	time_limit = ceilf((legs[1] + legs[2]) / RELAY_WALK_SPEED * 1.12 + recovery + 1.5)
+
+
+func _sync_relay_progress() -> void:
+	progress = 0
+	remaining = 0.0
+	for timer in relay_timers:
+		if timer > 0.0:
+			progress += 1
+			remaining = timer if remaining <= 0.0 else minf(remaining, timer)
+
+
 func _flat_distance(first: Vector3, second: Vector3) -> float:
 	return Vector2(first.x, first.z).distance_to(Vector2(second.x, second.z))
 
@@ -333,6 +474,9 @@ func _reset_attempt(reason: String) -> void:
 	armed = false
 	_walked = 0.0
 	_last_target = -999
+	if kind == "relay":
+		relay_timers.fill(0.0)
+		relay_activation_events.clear()
 	message = reason
 
 
@@ -340,7 +484,7 @@ func _complete() -> void:
 	completed = true
 	armed = false
 	remaining = 0.0
-	message = "场地操作通过。沿绿色箭头返回原终端，按 E 取得记录。"
+	message = "三柱供电已锁定。返回 R-03 原终端按 E 取得记录。" if kind == "relay" else "场地操作通过。沿绿色箭头返回原终端，按 E 取得记录。"
 
 
 func _build_visuals() -> void:
@@ -399,12 +543,14 @@ func _refresh() -> void:
 	if not is_instance_valid(visual_root):
 		return
 	for index in range(sites.size()):
-		var done := completed or index < progress
-		var current := not completed and index == _target_index()
+		var done := completed or (relay_timers[index] > 0.0 if kind == "relay" else index < progress)
+		var current := kind != "relay" and not completed and index == _target_index()
 		var color := Color("69cdc1") if done else (Color("ffd39b") if current else Color("79818b"))
 		_lamps[index].material_override = station.palette.mint if done else (station.palette.amber if current else station.palette.frame)
 		_labels[index].modulate = color
 		_labels[index].text = "%s %d / %s" % ["感应线" if kind == "silent" else ("同步开关" if kind == "clock" else "电源柱"), index + 1, "通过" if done else ("到这里" if current else "待机")]
+		if kind == "relay":
+			_labels[index].text = "电源柱 %d / %s" % [index + 1, "已锁定" if completed else ("供电 %.1fs" % relay_timers[index] if done else "[E] 启动")]
 		_lights[index].light_color = color
 		_lights[index].light_energy = 0.8 if done else (1.0 if current else 0.08)
 	_terminal_label.text = "场地已通过 · [E] 取证" if completed else guidance()
@@ -416,6 +562,8 @@ func _draw_route(origin: Vector2i) -> void:
 	_last_target = _target_index()
 	for child in route_root.get_children():
 		child.free()
+	if kind == "relay":
+		return
 	var destination: Vector2i = anchor if completed else sites[_target_index()].tile
 	var route: Array = station.path(1, origin, destination)
 	for index in range(mini(route.size() - 1, 18)):
