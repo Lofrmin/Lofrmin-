@@ -40,6 +40,12 @@ func run() -> void:
 	game.shift(game.station.GATES[0])
 	game.player.position = game.station.point(game.station.RELAY) + Vector3(0,0.05,0.6)
 	game.interact()
+	if game.dusk_trials.active and game.dusk_trials.kind == "relay":
+		for site in game.dusk_trials.sites:
+			game.player.position = site.position + Vector3(-0.95,0.05,0)
+			game.interact()
+		game.player.position = game.station.point(game.station.RELAY) + Vector3(0,0.05,0.6)
+		game.interact()
 	check(game.patched, "Dusk relay interaction connects cable")
 	for rig in game.station.relay_rigs:
 		check(rig.status_label.text == "LINKED", "linked label follows real interaction")

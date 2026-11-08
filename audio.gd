@@ -24,12 +24,30 @@ var player_distance := 0.0
 var hunter_distance := 0.0
 var alternate := false
 
+func ensure_audio_buses() -> void:
+	for bus in ["CorrMaster", "CorrEffects", "CorrAlerts", "CorrAmbience"]:
+		if AudioServer.get_bus_index(bus) < 0:
+			AudioServer.add_bus()
+			AudioServer.set_bus_name(AudioServer.bus_count - 1, bus)
+		AudioServer.set_bus_send(AudioServer.get_bus_index(bus), "Master" if bus == "CorrMaster" else "CorrMaster")
+
+func set_audio_levels(master: float, effects: float, alerts: float, ambience: float) -> void:
+	ensure_audio_buses()
+	var levels := {"CorrMaster": master, "CorrEffects": effects, "CorrAlerts": alerts, "CorrAmbience": ambience}
+	for bus in levels:
+		var level: float = clampf(levels[bus], 0.0, 1.0) if is_finite(levels[bus]) else 1.0
+		var index := AudioServer.get_bus_index(bus)
+		AudioServer.set_bus_mute(index, level <= 0.0)
+		AudioServer.set_bus_volume_db(index, linear_to_db(level) if level > 0.0 else -80.0)
+
 func setup(hunter: Node3D) -> void:
+	ensure_audio_buses()
 	chase_loop = CHASE_LOOP_SOURCE.duplicate() as AudioStreamWAV
 	chase_loop.loop_mode = AudioStreamWAV.LOOP_FORWARD
 	chase_loop.loop_end = chase_loop.data.size() / 2
 	chase = AudioStreamPlayer.new()
 	chase.stream = chase_loop
+	chase.bus = "CorrAmbience"
 	chase.volume_db = CHASE_SILENT_DB
 	chase.max_polyphony = 1
 	add_child(chase)
@@ -37,6 +55,7 @@ func setup(hunter: Node3D) -> void:
 		var voice := AudioStreamPlayer.new()
 		voice.stream = CLIPS[key]
 		voice.volume_db = -16.0
+		voice.bus = "CorrEffects"
 		voice.max_polyphony = 3
 		add_child(voice)
 		cues[key] = voice
@@ -47,13 +66,15 @@ func setup(hunter: Node3D) -> void:
 		voice.unit_size = 4.0
 		# shortcut: distance/panning only; add raycast occlusion after the jam if needed.
 		voice.max_distance = 18.0
-		voice.volume_db = -9.0 if key == "warning" else -12.0
+		voice.volume_db = {"warning": -3.0, "deploy": -6.0, "hunter_step": -12.0}[key]
+		voice.bus = "CorrEffects" if key == "hunter_step" else "CorrAlerts"
 		hunter.add_child(voice)
 		cues[key] = voice
 	hunter_step = cues.hunter_step
 	hunter_step.pitch_scale = 0.78
 	player_step = AudioStreamPlayer.new()
 	player_step.stream = CLIPS.step_a
+	player_step.bus = "CorrEffects"
 	player_step.volume_db = -21.0
 	add_child(player_step)
 

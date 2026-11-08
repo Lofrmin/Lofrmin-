@@ -39,6 +39,7 @@ func _draw() -> void:
 	match game.mode:
 		"menu": draw_menu()
 		"controls": draw_controls()
+		"settings": draw_settings()
 		"intro": draw_intro()
 		"audit", "keypad": draw_terminal()
 		"ending": draw_ending()
@@ -109,16 +110,43 @@ func draw_menu() -> void:
 	button(Rect2(65,358,330,49), "continue" if saved else "new_case", "Enter  继续调查" if saved else "Enter  开始新调查")
 	if saved:
 		button(Rect2(65,420,330,45), "new_case", "N  开始新调查", DIM)
-		button(Rect2(65,477,190,43), "controls", "H  操作说明", DIM)
-		button(Rect2(269,477,126,43), "quit", "Q  退出", DIM)
+		button(Rect2(65,477,146,43), "controls", "H 操作说明", DIM)
+		button(Rect2(225,477,86,43), "settings", "设置", DIM)
+		button(Rect2(325,477,70,43), "quit", "退出", DIM)
 		write(Vector2(65,561), "已归档：" + game.chapter_title(), 17)
 		write(Vector2(65,590), "继续调查会回到 A-01，保留已归档证据。", 14, DIM)
 	else:
 		button(Rect2(65,420,330,45), "controls", "H  操作说明", DIM)
-		button(Rect2(65,478,330,43), "quit", "Q  退出", DIM)
+		button(Rect2(65,478,190,43), "settings", "音量与难度设置", DIM)
+		button(Rect2(269,478,126,43), "quit", "Q  退出", DIM)
 		write(Vector2(65,566), "第一步：前往晨区 B-17，核对门禁记录。", 15, DIM)
 	code(Vector2(65,669), "01  EXPLORE   /   02  COMPARE   /   03  RETURN", 11, MINT)
 	write(Vector2(65,694), "本机自动存档 · 建议戴耳机 · 覆盖旧调查前会再次确认", 12, DIM)
+
+
+func draw_settings() -> void:
+	draw_rect(Rect2(0,0,1280,720),Color(0.008,0.016,0.024,0.86))
+	slab(Rect2(240,75,800,575),MINT,0.98)
+	code(Vector2(278,117), "PREFERENCES / 本机设置", 12)
+	write(Vector2(278,163), "音量与调查难度", 30)
+	write(Vector2(278,195), "音量即时生效 · 每次调整 10% · 0% 静音", 15, DIM)
+	var rows := [["master", "总音量", game.options.master_volume], ["effects", "音效 / 脚步", game.options.effects_volume], ["alert", "追债人警报", game.options.alert_volume], ["ambience", "追逐氛围", game.options.ambience_volume]]
+	for i in range(rows.size()):
+		var row: Array = rows[i]
+		var y := 229.0 + i * 57.0
+		write(Vector2(280,y+26),row[1],18)
+		draw_rect(Rect2(452,y+15,250,9),alpha(DIM,0.18))
+		draw_rect(Rect2(452,y+15,250*float(row[2]),9),alpha(MINT,0.8))
+		code(Vector2(722,y+26),"%3d%%" % roundi(float(row[2])*100),17)
+		button(Rect2(812,y,72,38),"setting_"+row[0]+"_down","−",MINT)
+		button(Rect2(902,y,72,38),"setting_"+row[0]+"_up","+",MINT)
+	write(Vector2(280,505), "追债人数量", 18)
+	button(Rect2(452,477,230,40),"setting_hunters_1","[选中] 1 名 · 标准" if game.options.hunter_count == 1 else "1 名 · 标准", MINT if game.options.hunter_count == 1 else DIM)
+	button(Rect2(704,477,270,40),"setting_hunters_2","[选中] 2 名 · 加压" if game.options.hunter_count == 2 else "2 名 · 加压", AMBER if game.options.hunter_count == 2 else DIM)
+	write(Vector2(280,548), "人数在下一轮调查生效，不改变本轮已部署的追债人。", 15, DIM)
+	var settings_notice: Variant = game.get("settings_notice")
+	write(Vector2(280,575), str(settings_notice) if settings_notice != null and not str(settings_notice).is_empty() else "设置独立保存，不会清除章节与证据。", 14, AMBER if settings_notice != null and not str(settings_notice).is_empty() else DIM)
+	button(Rect2(732,596,242,38),"settings_back","Esc / Enter  返回")
 
 
 func draw_controls() -> void:
@@ -160,6 +188,11 @@ func draw_intro() -> void:
 
 func draw_hud() -> void:
 	var accent := MINT if game.phase == 0 else AMBER
+	if game.field_task.active and game.mode == "world":
+		draw_field_task()
+	if game.phase == 1 and game.gate_lock > 0.0:
+		draw_rect(Rect2(434, 26, 412, 40), Color("492831"))
+		write(Vector2(450, 53), "换相门封锁 %.1f 秒  /  清算单位正在逼近" % game.gate_lock, 16, WHITE)
 	if game.big_map and game.mode == "world":
 		draw_big_map()
 		return
@@ -223,12 +256,53 @@ func draw_hud() -> void:
 			write(Vector2(100,subtitle_y+27+i*24),subtitle_lines[i],17)
 	if game.mode == "paused":
 		draw_rect(Rect2(0, 0, 1280, 720), Color(0.015, 0.028, 0.049, 0.65))
-		slab(Rect2(491, 193, 300, 371), MINT)
+		slab(Rect2(491, 193, 300, 407), MINT)
 		write(Vector2(519, 315), "调查暂停", 36)
 		button(Rect2(520, 345, 242, 48), "resume", "Esc / Enter 继续调查")
 		button(Rect2(520, 410, 242, 48), "quit", "保存后退出")
 		button(Rect2(520, 474, 242, 34), "controls", "H  操作说明", DIM)
-		button(Rect2(520, 520, 242, 31), "restart_prompt", "重新开始调查", DIM)
+		button(Rect2(520, 520, 242, 31), "settings", "音量与难度设置", DIM)
+		button(Rect2(520, 563, 242, 26), "restart_prompt", "重新开始调查", DIM)
+
+
+func draw_field_task() -> void:
+	var task = game.field_task
+	var tint := MINT if game.phase == 0 else AMBER
+	draw_rect(Rect2(416, 312, 610, 214), Color(0.025, 0.045, 0.055, 0.94))
+	draw_rect(Rect2(416, 312, 3, 214), tint)
+	write(Vector2(435, 340), task.title(), 20, tint)
+	write(Vector2(435, 367), task.instructions(), 14, WHITE)
+	match task.kind:
+		"circuit":
+			var lights: Array = task.lamps()
+			for index in range(3):
+				var x := 500.0 + index * 160.0
+				draw_circle(Vector2(x, 408), 14, MINT if lights[index] else Color("34464c"))
+				code(Vector2(x - 22, 449), "[%d] %s" % [index + 1, "ON" if task.switches[index] else "OFF"], 14, tint)
+			write(Vector2(435, 476), "线路图：① → 灯 A/C    ② → 灯 A/B    ③ → 灯 B", 14, DIM)
+		"clock":
+			for index in range(3):
+				var center := Vector2(516 + index * 165, 422)
+				draw_arc(center, 33, 0, TAU, 40, tint, 1.5, true)
+				for tick in range(8):
+					var direction := Vector2.from_angle(tick * TAU / 8.0 - PI / 2.0)
+					draw_line(center + direction * 27, center + direction * 32, DIM, 1.0, true)
+				var goal := Vector2.from_angle(task.targets[index] * TAU / 8.0 - PI / 2.0)
+				draw_circle(center + goal * 33, 5, WHITE, false, 1.5, true)
+				var pointer := Vector2.from_angle(task.dials[index] * TAU / 8.0 - PI / 2.0)
+				draw_line(center, center + pointer * 25, tint, 3.0, true)
+				code(center + Vector2(-28, 55), "[%d] %s" % [index + 1, "< >" if task.selection == index else ""], 14, WHITE)
+		"silent":
+			write(Vector2(435, 413), "静音读取  %.1f / 1.8 秒" % task.hold, 22, tint)
+			write(Vector2(435, 452), "按住 E 保持读取；WASD / Shift 会打断", 16, DIM)
+		"relay":
+			for index in range(3):
+				var x := 480.0 + index * 170.0
+				draw_rect(Rect2(x, 396, 110, 54), alpha(tint, 0.3 if index < task.progress else 0.07))
+				code(Vector2(x + 15, 430), "[%d] %s" % [index + 1, ["E-7", "OUT", "SYNC"][index]], 17, tint)
+			write(Vector2(435, 478), "已接 %d / 3   ·   接线窗口 %.1f 秒" % [task.progress, task.remaining], 16, WHITE)
+	if not task.message.is_empty():
+		write(Vector2(435, 512), task.message, 13, AMBER)
 
 
 func draw_minimap() -> void:
@@ -494,6 +568,12 @@ func draw_big_map() -> void:
 		var at: Vector2 = origin + (Vector2(station.GATES[index]) + Vector2(0.5, 0.5)) * cell_px
 		draw_rect(Rect2(at - Vector2(8, 8), Vector2(16, 16)), WHITE)
 		code(at + Vector2(-8, 4), "G%d" % (index + 1), 10, INK)
+	var hunter_positions: Array[Vector3] = game.extra_hunter_positions() if focus == 1 else []
+	if game.boss_live and game.boss_phase == focus: hunter_positions.append(game.boss.position)
+	for hunter_position in hunter_positions:
+		var hunter_mark := origin + (Vector2(hunter_position.x, hunter_position.z) / float(station.CELL) + Vector2(0.5, 0.5)) * cell_px
+		draw_circle(hunter_mark, 6.0, Color("ff667b"), true, -1.0, true)
+		code(hunter_mark + Vector2(-4, 4), "!", 11, INK)
 	var position: Vector3 = game.player.position
 	var mark: Vector2 = origin + (Vector2(position.x, position.z) / float(station.CELL) + Vector2(0.5, 0.5)) * cell_px
 	var forward: Vector3 = -game.player.basis.z

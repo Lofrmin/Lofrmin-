@@ -6,6 +6,31 @@ const Interface := preload("res://interface.gd")
 const Profile := preload("res://profile.gd")
 const Exterior := preload("res://exterior.gd")
 const HunterVisual := preload("res://hunter_visual.gd")
+const Preferences := preload("res://preferences.gd")
+var options := Preferences.new()
+var settings_return := "menu"
+var settings_notice := ""
+var lap_hunter_count := 1
+const HunterAgent := preload("res://hunter_agent.gd")
+const HUNTER_SPAWN_MIN := 8.0
+const HUNTER_SPAWN_MAX := 16.0
+const HUNTER_ROUTE_BUDGET := 24.0
+# World geometry stays on layer 1; temporary player-only grids use layer 2.
+const WORLD_GEOMETRY_MASK := 1
+const PLAYER_COLLISION_MASK := WORLD_GEOMETRY_MASK | 2
+var extra_hunters: Array[Node3D] = []
+var hunter_spawn_report := ""
+var audio_hunter: Node3D
+const FieldTask := preload("res://field_task.gd")
+const DUSK_LOCK_SECONDS := 12.0
+var field_task := FieldTask.new()
+const DuskTrials := preload("res://dusk_trials.gd")
+var dusk_trials := DuskTrials.new()
+var trials_chapter := -1
+var task_committing := false
+var gate_lock := 0.0
+var deployment_gate := -1
+var pending_evidence: Array[int] = []
 const CHAPTERS := ["01 / 同一扇门", "03 / 谁签了字", "05 / 站外回执", "02 / 先发生的事", "04 / 借出去的明天"]
 const NEXT_CHAPTER := [3, 4, -1, 1, 2]
 const RECORDS := [
@@ -113,6 +138,8 @@ var optics: ShaderMaterial
 
 
 func _ready() -> void:
+	options.load_settings()
+	lap_hunter_count = options.hunter_count
 	var env_node := WorldEnvironment.new()
 	var env := Environment.new()
 	var sky_material := ShaderMaterial.new()
@@ -169,10 +196,12 @@ func build_audio() -> void:
 	sound = Sound.new()
 	add_child(sound)
 	sound.setup(boss)
+	sound.set_audio_levels(options.master_volume, options.effects_volume, options.alert_volume, options.ambience_volume)
 
 
 func build_player() -> void:
 	player = CharacterBody3D.new()
+	player.collision_mask = PLAYER_COLLISION_MASK
 	var shape := CollisionShape3D.new()
 	var capsule := CapsuleShape3D.new()
 	capsule.height = 1.67
@@ -210,6 +239,8 @@ func build_boss() -> void:
 
 func _process(delta: float) -> void:
 	boss_rig.animation.active = mode == "world" and boss_live and boss.visible
+	for hunter in extra_hunters:
+		hunter.rig.animation.active = mode == "world" and hunter.live and hunter.visible
 	var opening := mode in ["menu", "intro"] or (mode == "controls" and controls_return == "menu") or (mode == "restart_confirm" and restart_return == "menu")
 	if opening:
 		update_opening(delta)
@@ -253,6 +284,8 @@ func _physics_process(delta: float) -> void:
 		return
 	time_in_lap += delta
 	shift_cooldown = maxf(0.0, shift_cooldown - delta)
+	gate_lock = maxf(0.0, gate_lock - delta)
+	update_field_task(delta)
 	var move := Vector2(float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A)), float(Input.is_physical_key_pressed(KEY_S)) - float(Input.is_physical_key_pressed(KEY_W)))
 	var direction := player.basis * Vector3(move.x, 0, move.y).normalized()
 	var shift_held := Input.is_physical_key_pressed(KEY_SHIFT)
@@ -268,15 +301,31 @@ func _physics_process(delta: float) -> void:
 	var moved := player.is_on_floor() and move.length_squared() > 0 and ground_distance > 0.001
 	apply_stamina_tick(delta, shift_held, moved)
 	sound.player_moved(previous_player, player.position, player.is_on_floor(), actual_sprinting)
+	if dusk_trials.update(delta, player.position, actual_sprinting, phase):
+		sound.cue("success")
+		say("场地操作已通过。返回原终端按 E 取证。")
 	if player.position.y < -3.0:
 		reset_lap("地板重力异常。审计匣已复原。")
 		return
+	if phase == 0:
+		stop_dusk_chase()
+	station.laser_grid.update(delta, phase, any_hunter_chasing(), player.position, boss.position, extra_hunter_positions())
+	var lap_before := laps
+	var previous_boss := boss.position
 	if boss_live:
-		var previous_boss := boss.position
 		update_boss(delta, actual_sprinting)
-		boss_rig.update_motion(delta, boss.position.distance_to(previous_boss) / delta, stunned > 0.0 or boss_delay > 0.0 or charge_warning > 0.0)
+		boss_rig.update_motion(delta, boss.position.distance_to(previous_boss) / maxf(delta, 0.001), stunned > 0.0 or boss_delay > 0.0 or charge_warning > 0.0)
+	if laps != lap_before: return
+	update_extra_hunters(delta, actual_sprinting)
+	if laps != lap_before: return
+	refresh_hunter_threat()
+	var nearest := nearest_hunter()
+	focus_hunter_audio(nearest)
+	if nearest == boss:
 		sound.hunter_moved(previous_boss, boss.position, boss_live and boss_phase == phase and boss_delay <= 0.0 and stunned <= 0.0)
-	sound.update_chase(delta, threat, boss_live and boss_chasing and boss_phase == phase and boss_delay <= 0.0 and stunned <= 0.0)
+	elif nearest != null:
+		sound.hunter_moved(nearest.previous_position, nearest.position, nearest.delay <= 0.0 and nearest.stunned <= 0.0)
+	sound.update_chase(delta, threat, any_hunter_chasing(true))
 	if upload > 0.0:
 		upload -= delta
 		# P1：上传中持续刷新中继面板倒计时
@@ -298,7 +347,19 @@ func _input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT and mode != "world":
 		handle_action(interface.button_at(event.position))
 	elif event is InputEventKey and event.pressed and not event.echo:
+		if mode == "world" and field_task.active:
+			if event.physical_keycode == KEY_ESCAPE:
+				field_task.active = false
+				say("操作已取消，现场记录尚未提交。")
+				return
+			if event.physical_keycode in [KEY_1, KEY_2, KEY_3, KEY_LEFT, KEY_RIGHT, KEY_ENTER, KEY_E]:
+				if field_task.press(event.physical_keycode):
+					finish_field_task()
+				return
 		if event.physical_keycode == KEY_ESCAPE:
+			if mode == "settings":
+				handle_action("settings_back")
+				return
 			if mode == "world" and big_map:
 				big_map = false
 				return
@@ -315,6 +376,8 @@ func _input(event: InputEvent) -> void:
 			handle_action("controls")
 			return
 		match mode:
+			"settings":
+				if event.physical_keycode == KEY_ENTER: handle_action("settings_back")
 			"menu":
 				if event.physical_keycode == KEY_ENTER:
 					handle_action("continue" if has_progress() else "new_case")
@@ -384,7 +447,27 @@ func _input(event: InputEvent) -> void:
 
 
 func handle_action(action: String) -> void:
+	if action.begins_with("setting_"):
+		if mode != "settings": return
+		var field := action.get_slice("_", 1)
+		if field == "hunters":
+			options.hunter_count = clampi(int(action.get_slice("_",2)),1,2)
+		elif field in ["master","effects","alert","ambience"]:
+			var property := field + "_volume"
+			var change := 0.1 if action.get_slice("_",2) == "up" else -0.1
+			options.set(property,clampf(float(options.get(property))+change,0.0,1.0))
+		else: return
+		sound.set_audio_levels(options.master_volume,options.effects_volume,options.alert_volume,options.ambience_volume)
+		settings_notice = "已保存 · 人数从下一轮开始生效" if options.save_settings() == OK else "设置写入失败：当前会话有效，请检查目录权限"
+		return
 	match action:
+		"settings":
+			if mode not in ["menu","paused"]: return
+			settings_return = mode
+			settings_notice = ""
+			set_mode("settings")
+		"settings_back":
+			if mode == "settings": set_mode(settings_return)
 		"start":
 			if mode == "intro": start_game()
 		"continue":
@@ -453,6 +536,8 @@ func handle_action(action: String) -> void:
 
 func set_mode(next: String) -> void:
 	boss_rig.animation.active = next == "world" and boss_live and boss.visible
+	for hunter in extra_hunters:
+		hunter.rig.animation.active = next == "world" and hunter.live and hunter.visible
 	if mode == "audit" and next != "audit":
 		alignment_fields.clear()
 		timeline_seconds = ""
@@ -466,6 +551,7 @@ func set_mode(next: String) -> void:
 
 
 func start_game() -> void:
+	lap_hunter_count = options.hunter_count
 	exterior.finish()
 	camera.make_current()
 	spawn_at_desk()
@@ -475,6 +561,7 @@ func start_game() -> void:
 
 
 func spawn_at_desk() -> void:
+	stop_dusk_chase()
 	phase = 0
 	map_phase = phase
 	station.set_phase(phase)
@@ -486,6 +573,10 @@ func spawn_at_desk() -> void:
 
 
 func update_witness() -> void:
+	if trials_chapter != chapter:
+		stop_dusk_chase()
+		dusk_trials.clear()
+		trials_chapter = chapter
 	station.update_witness(chapter, evidence[0], case_accepted)
 	station.update_audit_status(audit_status_text())
 	sync_relay_visual()
@@ -535,14 +626,21 @@ func nearby() -> Vector2i:
 
 
 func interaction_prompt() -> String:
+	var spatial_prompt: String = dusk_trials.prompt(player.position, phase)
+	if not spatial_prompt.is_empty():
+		return spatial_prompt
 	var tile := nearby()
 	if tile == station.AUDIT:
+		if phase != 0:
+			return "暮区 A-01 离线 · 回晨区归档"
 		if chapter == 0 and not case_accepted and not evidence.has(true):
 			return "[E] 确认接案 / A-01    ·    也可直接前往 B-17"
 		if chapter == 1 and not case_accepted and not evidence.has(true):
 			return "[E] 查看任务详情 / A-01    ·    暂缓确认"
 		return "[E] 打开证据工作台 / A-01"
 	if tile in station.GATES:
+		if phase == 1 and gate_lock > 0.0:
+			return "换相门封锁中  %.1f 秒 · 先绕开追债人" % gate_lock
 		return "[E] 穿过换相门  →  %s" % ("暮区" if phase == 0 else "晨区")
 	if tile == station.OFFICE:
 		return "[E] 调查办公室 / B-17"
@@ -558,10 +656,20 @@ func interaction_prompt() -> String:
 
 
 func interact() -> void:
+	if dusk_trials.interact(player.position, phase):
+		say(dusk_trials.message)
+		return
 	var tile := nearby()
+	if field_task.active:
+		return
+	if start_field_task(tile):
+		return
 	if tile in station.GATES:
 		shift(tile)
 	elif tile == station.AUDIT:
+		if phase != 0:
+			say("暮区调查台离线。记录须回晨区 A-01 归档。")
+			return
 		if boss_live and boss_phase == phase and boss.position.distance_to(player.position) < 4.0 and stunned <= 0.0:
 			say("追债人太近。先把它引开，或用断相脉冲打断它。")
 			return
@@ -577,6 +685,7 @@ func interact() -> void:
 			evidence[2] = true
 		if unbanked:
 			unbanked = false
+			pending_evidence.clear()
 			say("现场记录已写入审计匣。")
 		store_progress()
 		map_phase = phase
@@ -610,12 +719,294 @@ func interact() -> void:
 			say("配额终端要求提供已核验的扣款授权。")
 
 
+func start_field_task(tile: Vector2i) -> bool:
+	if task_committing:
+		return false
+	var task := ""
+	if tile == station.OFFICE:
+		if chapter == 0 and phase == 0 and not evidence[0]:
+			task = "circuit"
+		elif phase == 1 and ((chapter == 0 and not evidence[1]) or (chapter == 1 and not case_accepted and not evidence[2])):
+			task = "silent"
+	elif tile == station.LAB and chapter == 3 and not evidence[phase]:
+		task = "clock"
+	elif tile == station.RELAY and chapter == 2 and solved and armed and not patched and phase == 1:
+		task = "relay"
+	if task.is_empty():
+		return false
+	if phase == 1 and task in ["silent", "clock", "relay"]:
+		if dusk_trials.is_complete(task):
+			return false
+		if dusk_trials.begin(task, station, phase):
+			say(dusk_trials.guidance())
+		else:
+			say(dusk_trials.message)
+		return true
+	field_task.begin(task, tile, phase)
+	say(field_task.instructions() + " · Esc 取消；操作时世界不会暂停。")
+	return true
+
+
+func update_field_task(delta: float) -> void:
+	if not field_task.active:
+		return
+	if phase != field_task.task_phase or player.position.distance_to(station.point(field_task.anchor)) >= 1.82:
+		field_task.active = false
+		say("已离开操作范围，任务尚未完成。")
+		return
+	var moving := false
+	for key in [KEY_W, KEY_A, KEY_S, KEY_D, KEY_SHIFT]:
+		moving = moving or Input.is_physical_key_pressed(key)
+	if field_task.tick(delta, Input.is_physical_key_pressed(KEY_E) and not moving):
+		finish_field_task()
+
+
+func finish_field_task() -> void:
+	if not field_task.active or phase != field_task.task_phase or nearby() != field_task.anchor:
+		field_task.active = false
+		return
+	field_task.active = false
+	task_committing = true
+	interact()
+	task_committing = false
+
+
+# Re-deploy the existing hunter, including when it is already live in another phase.
+# The closest reachable gate is chosen by world distance; gates without a path are excluded.
+func deploy_after_submission() -> void:
+	if phase != 1:
+		return
+	clear_extra_hunters()
+	var best := INF
+	deployment_gate = -1
+	var here: Vector2i = station.cell(player.position)
+	for index in range(station.GATES.size()):
+		var gate: Vector2i = station.GATES[index]
+		if station.hunter_path(phase, gate, here).is_empty():
+			continue
+		var distance := player.position.distance_squared_to(station.point(gate))
+		if distance < best:
+			best = distance
+			deployment_gate = index
+	if deployment_gate < 0:
+		return
+	boss_live = true
+	boss_phase = phase
+	var safe_tile := safe_hunter_spawn([])
+	if not station.walkable(1,safe_tile):
+		boss_live = false
+		return
+	boss.position = station.point(safe_tile)
+	boss_delay = 1.6
+	boss.show()
+	boss_route.clear()
+	stunned = 0.0
+	charge_warning = 0.0
+	charge_time = 0.0
+	charge_recovery = 2.0
+	last_known = here
+	tracking_time = DUSK_LOCK_SECONDS + 2.0
+	path_timer = 0.0
+	gate_lock = DUSK_LOCK_SECONDS
+	deploy_extra_hunters()
+	refresh_hunter_threat()
+	focus_hunter_audio(nearest_hunter())
+	sound.cue("deploy")
+	say(notice + "\n安全点部署共 %d 名追债人；换相门封锁 %.0f 秒。%s" % [1 + extra_hunters.size(), gate_lock, hunter_spawn_report])
+
+
+func clear_extra_hunters() -> void:
+	# Spatial voices must leave an extra actor before that actor is freed.
+	if is_instance_valid(sound): focus_hunter_audio(boss)
+	for hunter in extra_hunters:
+		hunter.live = false
+		hunter.hide()
+		hunter.rig.animation.active = false
+		hunter.route.clear()
+		hunter.queue_free()
+	extra_hunters.clear()
+
+
+func extra_hunter_positions() -> Array[Vector3]:
+	var positions: Array[Vector3] = []
+	for hunter in extra_hunters:
+		if hunter.live: positions.append(hunter.position)
+	return positions
+
+
+# Four-connected grid shortest paths, followed by capsule-checked local fixture detours.
+# This is not a claim of globally shortest continuous-space navigation.
+func hunter_spawn_route(origin: Vector3, target: Vector3) -> PackedVector3Array:
+	var tiles: Array[Vector2i] = station.hunter_path(1, station.cell(origin), station.cell(target))
+	var result := PackedVector3Array([origin])
+	if tiles.is_empty(): return PackedVector3Array()
+	for index in range(1, tiles.size()):
+		var next: Vector3 = station.point(tiles[index])
+		var previous: Vector3 = result[result.size() - 1]
+		if boss_motion_fraction(previous, next) >= 1.0:
+			result.append(next)
+		else:
+			var detour := hunter_detour_path(previous, next, 1)
+			if detour.size() < 2: return PackedVector3Array()
+			for step in range(1, detour.size()): result.append(detour[step])
+	var end := Vector3(target.x, 0, target.z)
+	var previous: Vector3 = result[result.size() - 1]
+	if previous.distance_to(end) > 0.05:
+		if boss_motion_fraction(previous, end) >= 1.0:
+			result.append(end)
+		else:
+			var detour := hunter_detour_path(previous, end, 1)
+			if detour.size() < 2: return PackedVector3Array()
+			for step in range(1, detour.size()): result.append(detour[step])
+	# Pull collision-free shortcuts across the composed grid/local route; this also
+	# removes backtracking introduced when a fixture obstructs a grid-center edge.
+	var compact := PackedVector3Array([result[0]])
+	var cursor := 0
+	while cursor < result.size() - 1:
+		var next := result.size() - 1
+		while next > cursor + 1 and boss_motion_fraction(result[cursor], result[next]) < 1.0:
+			next -= 1
+		compact.append(result[next])
+		cursor = next
+	return compact
+
+
+func route_world_length(route: PackedVector3Array) -> float:
+	var length := 0.0
+	for index in range(1, route.size()): length += route[index - 1].distance_to(route[index])
+	return length
+
+
+func deploy_extra_hunters() -> void:
+	if lap_hunter_count <= 1:
+		hunter_spawn_report = "标准模式：一名追债人"
+		return
+	var candidates: Array[Dictionary] = []
+	var here: Vector2i = station.cell(player.position)
+	var reserved: Array = station.GATES + [station.AUDIT, station.OFFICE, station.RELAY, station.LAB, station.MEDICAL, station.LEDGER]
+	for z in range(-4, 5):
+		for x in range(-4, 5):
+			var tile := here + Vector2i(x, z)
+			if not station.walkable(1, tile) or tile in reserved: continue
+			var position: Vector3 = station.point(tile)
+			var distance := position.distance_to(Vector3(player.position.x, 0, player.position.z))
+			if distance < HUNTER_SPAWN_MIN or distance > HUNTER_SPAWN_MAX: continue
+			if boss_motion_fraction(position, position) < 1.0: continue
+			var near_device := false
+			for site in dusk_trials.sites:
+				if position.distance_to(site.position) < 2.0: near_device = true
+			if near_device: continue
+			var route := hunter_spawn_route(position, player.position)
+			if route.size() < 2: continue
+			var length := route_world_length(route)
+			# A nearby circle across a long wall is not an encounter spawn.
+			if length > HUNTER_ROUTE_BUDGET or length > distance * 1.8: continue
+			var visible_route := hunter_has_sight(position)
+			candidates.append({"position": position, "length": length, "visible": visible_route})
+	var chosen: Array[Vector3] = []
+	# Select the best compatible pair globally: greedy choice can consume the only
+	# approach angle compatible with a second safe point (notably at B-17).
+	var preferred: Array[int] = []
+	var pair_score := INF
+	for first in range(candidates.size()):
+		for second in range(first + 1, candidates.size()):
+			var a: Vector3 = candidates[first].position
+			var b: Vector3 = candidates[second].position
+			var angle := (a - player.position).angle_to(b - player.position)
+			if a.distance_to(b) < 6.0 or angle < 0.65: continue
+			var score: float = candidates[first].length + candidates[second].length - angle * 3.0
+			if not candidates[first].visible: score += 3.0
+			if not candidates[second].visible: score += 3.0
+			if score < pair_score:
+				pair_score = score
+				preferred = [first, second]
+	for count in range(lap_hunter_count - 1):
+		var best_index := -1
+		var best_score := INF
+		for index in range(candidates.size()):
+			var candidate: Dictionary = candidates[index]
+			var separation := PI
+			var vector: Vector3 = candidate.position - player.position
+			for previous in chosen:
+				separation = minf(separation, vector.angle_to(previous - player.position))
+				if candidate.position.distance_to(previous) < 6.0: separation = -1.0
+			if separation < 0.65: continue
+			var score: float = candidate.length + (0.0 if candidate.visible else 3.0) - separation * 3.0
+			if score < best_score:
+				best_score = score
+				best_index = index
+		if not preferred.is_empty(): best_index = preferred[count]
+		if best_index < 0: break
+		var position: Vector3 = candidates[best_index].position
+		chosen.append(position)
+		if preferred.is_empty(): candidates.remove_at(best_index)
+		var hunter := HunterAgent.new()
+		hunter.name = "NearbyHunter_%d" % count
+		add_child(hunter)
+		hunter.position = position
+		hunter.last_known = here
+		hunter.target_position = Vector3(player.position.x, 0, player.position.z)
+		hunter.tracking_time = DUSK_LOCK_SECONDS + 2.0
+		hunter.eye.material_override = station.palette.red
+		extra_hunters.append(hunter)
+	hunter_spawn_report = "附近没有额外安全点，保留一名。" if extra_hunters.size() < lap_hunter_count - 1 else "绕开来路，再回晨区归档。"
+
+
+func update_extra_hunters(delta: float, sprint: bool) -> void:
+	var lap_before := laps
+	# update_agent can reset the lap; iterate a copy so lifecycle cleanup is safe.
+	for hunter in extra_hunters.duplicate():
+		if not hunter.live: continue
+		hunter.update_agent(self, delta, sprint)
+		if laps != lap_before: return
+		hunter.rig.update_motion(delta, hunter.position.distance_to(hunter.previous_position) / maxf(delta, 0.001), hunter.stunned > 0.0 or hunter.delay > 0.0 or hunter.charge_warning > 0.0)
+
+
+func nearest_hunter() -> Node3D:
+	var nearest: Node3D = boss if boss_live and boss_phase == phase else null
+	var distance := boss.position.distance_squared_to(player.position) if nearest != null else INF
+	for hunter in extra_hunters:
+		if not hunter.live or phase != 1: continue
+		var next := hunter.position.distance_squared_to(player.position)
+		if next < distance:
+			distance = next
+			nearest = hunter
+	return nearest
+
+
+func any_hunter_chasing(audible := false) -> bool:
+	if boss_live and boss_phase == phase and boss_chasing and (not audible or (boss_delay <= 0.0 and stunned <= 0.0)): return true
+	for hunter in extra_hunters:
+		if phase == 1 and hunter.live and hunter.chasing and (not audible or (hunter.delay <= 0.0 and hunter.stunned <= 0.0)): return true
+	return false
+
+
+func refresh_hunter_threat() -> void:
+	var nearest := nearest_hunter()
+	threat = 0.0 if nearest == null else clampf(1.1 - nearest.position.distance_to(player.position) / 15.0, 0.14, 0.92)
+
+
+func focus_hunter_audio(hunter: Node3D) -> void:
+	if not is_instance_valid(sound) or hunter == null or audio_hunter == hunter: return
+	for key in ["hunter_step", "warning", "deploy"]:
+		var voice: Node3D = sound.cues[key]
+		if voice.get_parent() != hunter: voice.reparent(hunter, false)
+	sound.hunter_distance = 0.0
+	audio_hunter = hunter
+
+
 func record(index: int, message: String) -> void:
-	if not evidence[index]:
+	var fresh: bool = not evidence[index]
+	if fresh:
 		sound.cue("collect")
 	evidence[index] = true
+	if fresh and phase == 1:
+		pending_evidence.append(index)
+		unbanked = true
 	store_progress()
 	say(message)
+	if fresh:
+		deploy_after_submission()
 
 
 func press_keypad(key: String) -> void:
@@ -654,7 +1045,8 @@ func inspect_office() -> void:
 				unbanked = true
 				sound.cue("collect")
 				say("遗书：下次接到任务时，先别按确认。警告，清算外骨骼已启动。")
-				activate_boss(station.RELAY)
+				pending_evidence.append_array([1, 2])
+				deploy_after_submission()
 			else:
 				say("遗书是你的笔迹。两份日志里的警报声完全一样。")
 		store_progress()
@@ -668,7 +1060,8 @@ func inspect_office() -> void:
 			unbanked = true
 			sound.cue("collect")
 			say("林岑还活着：用事故前的求救线路。快，把授权记录送出去。")
-			activate_boss(station.RELAY)
+			pending_evidence.append(2)
+			deploy_after_submission()
 			store_progress()
 	else:
 		say("B-17 门禁依旧在等待下一次复核。")
@@ -686,9 +1079,13 @@ func inspect_relay() -> void:
 			activate_boss(station.GATES[1])
 			sync_relay_visual()
 		elif phase == 1 and armed:
-			patched = true
-			say("中继接通。回晨区调查台，外发完整账本。")
-			sync_relay_visual()
+			if not patched:
+				patched = true
+				say("中继接通。回晨区调查台，外发完整账本。")
+				deploy_after_submission()
+				sync_relay_visual()
+			else:
+				say("中继已接通，回晨区 A-01 外发。")
 		else:
 			say("需先在晨区合上应急开关。")
 	else:
@@ -696,6 +1093,8 @@ func inspect_relay() -> void:
 
 
 func objective() -> String:
+	if phase == 1 and dusk_trials.active and not dusk_trials.completed:
+		return dusk_trials.guidance()
 	match chapter:
 		0:
 			if not evidence[0]: return "晨区 B-17：调查林岑的门禁记录。"
@@ -724,6 +1123,12 @@ func objective() -> String:
 
 
 func guidance() -> String:
+	if phase == 1 and dusk_trials.active and not dusk_trials.completed:
+		return "沿地面发光箭头移动 · 靠近实体按 E · 世界不会暂停"
+	if field_task.active:
+		return "现场操作中 · 可移动躲避 · Esc 取消操作"
+	if phase == 1 and gate_lock > 0.0:
+		return "换相门封锁 %.1f 秒 · Shift 绕障碍 · F 断相" % gate_lock
 	if map_phase != phase:
 		return "Tab 只是地图预览；到 G 门按 E 才能换区。"
 	if unbanked:
@@ -852,34 +1257,12 @@ func ready_to_send() -> bool:
 func begin_upload() -> void:
 	if mode != "audit" or not ready_to_send():
 		return
-	var approach: Array[Vector2i] = []
-	var target: Vector2i = station.cell(player.position)
-	for gate in station.GATES:
-		var route: Array[Vector2i] = station.path(0, gate, target)
-		if route.size() >= 5 and (approach.is_empty() or route.size() < approach.size()):
-			approach = route
-	if approach.is_empty():
-		say("上行通道暂不可用，请重新靠近调查台。")
-		return
-	boss_live = true
-	boss_phase = 0
-	var entry := approach.size() - 5
-	while entry > 0 and station.point(approach[entry]).distance_to(player.position) < 12.0:
-		entry -= 1
-	boss.position = station.point(approach[entry])
-	boss_delay = 0.6
-	stunned = 0.0
-	charge_warning = 0.0
-	charge_time = 0.0
-	charge_recovery = 0.8
-	boss_route.clear()
-	boss_stall_time = 0.0
-	tracking_time = 6.0
+	stop_dusk_chase()
 	upload = 6.0
 	last_known = station.AUDIT
 	path_timer = 0.0
 	set_mode("world")
-	say("上行信号已暴露。撑过六秒，回执会写入审计匣。")
+	say("站外传输中。六秒后，回执会写入审计匣。")
 	sound.cue("archive")
 	sync_relay_visual()
 
@@ -890,8 +1273,13 @@ func say(message: String) -> void:
 
 
 func shift(tile: Vector2i) -> void:
+	if tile not in station.GATES:
+		return
+	if phase == 1 and gate_lock > 0.0:
+		say("上传警报未解除：换相门还需 %.1f 秒解锁。" % gate_lock)
+		return
 	if upload > 0.0:
-		say("上行连接尚未完成，留在晨区躲避追债人。")
+		say("上行连接尚未完成，请留在晨区等待回执。")
 		return
 	if shift_cooldown > 0.0:
 		say("换相门正在同步，请稍候。")
@@ -902,6 +1290,8 @@ func shift(tile: Vector2i) -> void:
 	phase = 1 - phase
 	map_phase = phase
 	station.set_phase(phase)
+	if phase == 0:
+		stop_dusk_chase()
 	player.position = station.point(tile) + Vector3.UP * 0.055
 	player.velocity = Vector3.ZERO
 	cross_gate = tile
@@ -921,21 +1311,49 @@ func shift(tile: Vector2i) -> void:
 	say("晨区暂时安全。回 A-01 归档、核验记录。" if phase == 0 else "暮区有清算单位巡逻。听脚步、绕开视线，别在门口久留。")
 
 
-func dusk_spawn_tile() -> Vector2i:
+var previous_spawn := Vector2i(-1,-1)
+var spawn_rng := RandomNumberGenerator.new()
+
+func safe_hunter_spawn(reserved: Array) -> Vector2i:
 	var origin: Vector2i = station.cell(player.position)
-	if tactic == "ambush":
-		var gate: Vector2i = station.GATES[tactic_gate]
-		if station.path(1, origin, gate).size() >= 9:
-			return gate
+	var candidates: Array[Vector2i] = []
+	for z in range(1,station.MAP_SIZE.y-1):
+		for x in range(1,station.MAP_SIZE.x-1):
+			var tile := Vector2i(x,z)
+			if not station.walkable(1,tile) or tile == previous_spawn or tile in reserved: continue
+			var point: Vector3 = station.point(tile)
+			if point.distance_to(player.position) < 28.0 or point.distance_to(player.position) > 64.0: continue
+			var blocked := false
+			for gate in station.GATES:
+				if point.distance_to(station.point(gate)) < 8.0: blocked = true
+			for other in reserved:
+				if point.distance_to(station.point(other)) < 8.0: blocked = true
+			if not blocked: candidates.append(tile)
+	spawn_rng.randomize()
+	while not candidates.is_empty():
+		var index := spawn_rng.randi_range(0,candidates.size()-1)
+		var tile: Vector2i = candidates[index]
+		candidates.remove_at(index)
+		if boss_motion_fraction(station.point(tile),station.point(tile)) < 1.0: continue
+		var route: Array = station.hunter_path(1,origin,tile)
+		if route.size() < 9 or route.size() > 25: continue
+		previous_spawn = tile
+		return tile
+	# Fall back to a reachable authored point only when random candidates are exhausted.
 	for target in [station.LAB, station.LEDGER, station.RELAY, station.OFFICE]:
-		var route: Array[Vector2i] = station.path(1, origin, target)
+		var route: Array[Vector2i] = station.hunter_path(1, origin, target)
 		if route.size() >= 9:
-			return route[mini(10, route.size() - 1)]
-	return station.RELAY
+			var tile: Vector2i = route[mini(10,route.size()-1)]
+			if boss_motion_fraction(station.point(tile),station.point(tile)) == 1.0: return tile
+	return Vector2i(-1,-1)
+
+func dusk_spawn_tile() -> Vector2i:
+	return safe_hunter_spawn([])
 
 
 func activate_boss(tile: Vector2i) -> void:
-	if boss_live or phase != 1: return
+	if boss_live or phase != 1 or not station.walkable(1,tile):
+		return
 	boss_live = true
 	boss_phase = 1
 	boss_delay = 2.2
@@ -949,13 +1367,34 @@ func activate_boss(tile: Vector2i) -> void:
 	sound.cue("deploy")
 
 
+func stop_dusk_chase() -> void:
+	var had_hunter := boss_live or boss_chasing or not extra_hunters.is_empty()
+	clear_extra_hunters()
+	boss_chasing = false
+	boss_live = false
+	if had_hunter:
+		sound.quiet()
+	boss.hide()
+	boss_route.clear()
+	threat = 0.0
+	stunned = 0.0
+	charge_warning = 0.0
+	charge_time = 0.0
+	boss_delay = 0.0
+	charge_recovery = 0.0
+	tracking_time = 0.0
+	path_timer = 0.0
+	gate_lock = 0.0
+	deployment_gate = -1
+	station.laser_grid.clear()
+
+
 func update_boss(delta: float, sprint: bool) -> void:
 	boss_chasing = false
-	if phase == 0 and upload <= 0.0:
-		boss.hide()
-		threat = 0.0
+	if phase != 1 or boss_phase != 1:
+		stop_dusk_chase()
 		return
-	var protected := dusk_grace > 0.0 and phase == 1
+	var protected := dusk_grace > 0.0
 	dusk_grace = maxf(0.0, dusk_grace - delta)
 	boss_delay = maxf(0.0, boss_delay - delta)
 	stunned = maxf(0.0, stunned - delta)
@@ -966,6 +1405,12 @@ func update_boss(delta: float, sprint: bool) -> void:
 	boss_eye.material_override = station.palette.blue if stunned > 0.0 else station.palette.red
 	boss_lamp.light_color = Color("54c9ff") if stunned > 0.0 else Color("ff2455")
 	threat = 0.2 if not same_phase else clampf(1.1 - distance / 15.0, 0.14, 0.92)
+	if gate_lock > 0.0 and same_phase:
+		var locked_cell: Vector2i = station.cell(player.position)
+		if locked_cell != last_known: boss_route.clear()
+		last_known = locked_cell
+		tracking_time = maxf(tracking_time, 3.0)
+		boss_chasing = true
 	if boss_delay > 0.0 or stunned > 0.0:
 		return
 	if same_phase and boss_motion_fraction(boss.position, boss.position) < 0.001:
@@ -976,15 +1421,18 @@ func update_boss(delta: float, sprint: bool) -> void:
 			boss_route.clear()
 			return
 	var seen := same_phase and distance < 13.0 and has_sight()
+	var locked := same_phase and gate_lock > 0.0
 	tracking_time = maxf(0.0, tracking_time - delta)
-	if seen or (same_phase and sprint and distance < 10.5):
-		last_known = station.cell(player.position)
-		tracking_time = 3.0
+	if locked or seen or (same_phase and sprint and distance < 10.5):
+		var next_known: Vector2i = station.cell(player.position)
+		if locked and next_known != last_known: boss_route.clear()
+		last_known = next_known
+		tracking_time = maxf(tracking_time, 3.0)
 		if sprint and not seen:
 			sprint_observed = 1
 	boss_chasing = same_phase and (seen or tracking_time > 0.0 or upload > 0.0)
 	var player_target := Vector3(player.position.x, 0, player.position.z)
-	var direct_chase := seen and boss_motion_fraction(boss.position, player_target) >= 1.0
+	var direct_chase := (seen or locked) and boss_motion_fraction(boss.position, player_target) >= 1.0
 	if direct_chase and distance < 1.10 and not protected and not dev_god:
 		reset_lap("追债人完成结算。审计匣里的记录随你回到了开场。")
 		return
@@ -1011,9 +1459,9 @@ func update_boss(delta: float, sprint: bool) -> void:
 			charge_time = 0.0
 			sound.cue("deploy")
 			return
-	elif tactic == "cutoff" and not seen and not sprint and upload <= 0.0:
+	elif tactic == "cutoff" and gate_lock <= 0.0 and not seen and not sprint and upload <= 0.0:
 		destination = station.GATES[tactic_gate]
-	elif tactic == "guard" and not seen and not sprint and upload <= 0.0:
+	elif tactic == "guard" and gate_lock <= 0.0 and not seen and not sprint and upload <= 0.0:
 		destination = station.GUARD
 	elif not seen and tracking_time <= 0.0 and upload <= 0.0:
 		var sweep: Array = [station.LAB, station.OFFICE, station.LEDGER, station.RELAY] + station.GATES
@@ -1032,7 +1480,7 @@ func update_boss(delta: float, sprint: bool) -> void:
 		# 阶段 A：持续无进展时无视格心距离强制重规划
 		var stalled_replan := boss_stall_time >= BOSS_STALL_REPLAN
 		if boss_route.is_empty() or stalled_replan or (path_timer <= 0.0 and boss.position.distance_to(center) < 0.22):
-			boss_route = station.path(boss_phase, cell_at_boss, destination)
+			boss_route = station.hunter_path(boss_phase, cell_at_boss, destination)
 			if not boss_route.is_empty() and boss.position.distance_to(center) < 0.22:
 				boss_route.pop_front()
 			path_timer = 0.30
@@ -1040,8 +1488,11 @@ func update_boss(delta: float, sprint: bool) -> void:
 				boss_stall_time = 0.0  # 重规划后清零，避免每帧都重算
 		if not boss_route.is_empty():
 			target = station.point(boss_route[0])
-		if seen:
-			var detour := boss_detour_path(player_target)
+		if locked and cell_at_boss == destination: target = player_target
+		# Local fixtures can also obstruct an A* waypoint while the player is occluded.
+		var local_target := player_target if seen else target
+		if seen or boss_motion_fraction(boss.position, target) < 1.0:
+			var detour := boss_detour_path(local_target)
 			if detour.size() > 1: target = detour[1]
 	if boss.position.distance_to(target) < 0.035:
 		if not boss_route.is_empty():
@@ -1067,6 +1518,7 @@ func boss_motion_fraction(origin: Vector3, target: Vector3) -> float:
 	query.motion = target - origin
 	query.margin = 0.005
 	query.exclude = [player.get_rid()]
+	query.collision_mask = WORLD_GEOMETRY_MASK
 	var space := get_world_3d().direct_space_state
 	# cast_motion ignores shapes already overlapping at the origin.
 	if not space.intersect_shape(query, 1).is_empty(): return 0.0
@@ -1119,17 +1571,21 @@ func try_boss_overlap_recovery(origin: Vector3) -> Vector3:
 
 
 func boss_detour_path(target: Vector3) -> PackedVector3Array:
-	# shortcut: nearby grid centers route around furniture; dense interiors would need baked navigation.
+	return hunter_detour_path(boss.position, target, boss_phase)
+
+
+func hunter_detour_path(origin: Vector3, target: Vector3, hunter_phase: int) -> PackedVector3Array:
+	# Local visibility graph: shortest among these collision-checked neighboring waypoints.
 	var route := AStar3D.new()
-	route.add_point(0, boss.position)
+	route.add_point(0, origin)
 	route.add_point(1, target)
-	var tile: Vector2i = station.cell(boss.position)
+	var tile: Vector2i = station.cell(origin)
 	for z in range(-1, 2):
 		for x in range(-1, 2):
 			var candidate := tile + Vector2i(x, z)
-			if not station.walkable(boss_phase, candidate): continue
+			if not station.walkable(hunter_phase, candidate): continue
 			var point: Vector3 = station.point(candidate)
-			if point.distance_to(boss.position) < 0.05 or point.distance_to(target) < 0.05: continue
+			if point.distance_to(origin) < 0.05 or point.distance_to(target) < 0.05: continue
 			route.add_point(route.get_point_count(), point)
 	for first in range(route.get_point_count()):
 		for second in range(first + 1, route.get_point_count()):
@@ -1139,8 +1595,13 @@ func boss_detour_path(target: Vector3) -> PackedVector3Array:
 
 
 func has_sight() -> bool:
-	var query := PhysicsRayQueryParameters3D.create(boss.position + Vector3.UP * 1.45, player.position + Vector3.UP * 1.32)
+	return hunter_has_sight(boss.position)
+
+
+func hunter_has_sight(origin: Vector3) -> bool:
+	var query := PhysicsRayQueryParameters3D.create(origin + Vector3.UP * 1.45, player.position + Vector3.UP * 1.32)
 	query.exclude = [player.get_rid()]
+	query.collision_mask = WORLD_GEOMETRY_MASK
 	return get_world_3d().direct_space_state.intersect_ray(query).is_empty()
 
 
@@ -1172,28 +1633,50 @@ func pulse() -> void:
 	if charges <= 0:
 		say("本轮断相脉冲已用尽。")
 		return
-	if not boss_live or boss_phase != phase or not boss.visible or boss.position.distance_to(player.position) > 7.0 or not has_sight():
+	var hits := 0
+	if boss_live and boss_phase == phase and boss.visible and boss.position.distance_to(player.position) <= 7.0 and has_sight():
+		stunned = 2.25
+		charge_time = 0.0
+		charge_warning = 0.0
+		charge_recovery = 3.0
+		hits += 1
+	for hunter in extra_hunters:
+		if phase == 1 and hunter.live and hunter.visible and hunter.position.distance_to(player.position) <= 7.0 and hunter_has_sight(hunter.position):
+			hunter.pulse_stun()
+			hits += 1
+	if hits == 0:
 		say("脉冲未锁定。需要与追债人在同一时态且无遮挡。")
 		return
+	# One area pulse, one charge, even when several visible hunters are affected.
 	charges -= 1
 	sound.cues.warning.stop()
-	stunned = 2.25
-	charge_time = 0.0
-	charge_warning = 0.0
-	charge_recovery = 3.0
 	sound.cue("success")
-	say("追债人失相。现在走。")
+	say("%d 名追债人失相。现在走。" % hits)
 
 
 func threat_text() -> String:
-	if stunned > 0.0: return "追债人失相  %.1f s" % stunned
-	if charge_warning > 0.0: return "警告  //  追债人准备冲刺"
-	if boss_phase != phase: return "追债人正在另一时态搜索"
-	return "结算警告  //  追债人已部署"
+	var nearest := nearest_hunter()
+	var count := extra_hunters.size() + (1 if boss_live else 0)
+	if nearest == null: return "当前时态安全"
+	var prefix := "%d 名追债人 · " % count
+	var active_stun: float = stunned if nearest == boss else nearest.stunned
+	var warning: float = charge_warning if nearest == boss else nearest.charge_warning
+	if active_stun > 0.0: return prefix + "最近失相 %.1f s" % active_stun
+	if warning > 0.0: return prefix + "最近准备冲刺"
+	if gate_lock > 0.0: return prefix + "警报精确追踪"
+	return prefix + "最近 %.0f m" % nearest.position.distance_to(player.position)
 
 
 func reset_lap(message: String) -> void:
+	lap_hunter_count = options.hunter_count
 	sound.quiet()
+	clear_extra_hunters()
+	station.laser_grid.clear()
+	dusk_trials.clear()
+	field_task.active = false
+	task_committing = false
+	gate_lock = 0.0
+	deployment_gate = -1
 	alignment_fields.clear()
 	timeline_seconds = ""
 	timeline_order.clear()
@@ -1204,6 +1687,7 @@ func reset_lap(message: String) -> void:
 	if boss_live:
 		profile.choose_tactic(laps, gate_observed, sprint_observed)
 	evidence = banked_evidence()
+	pending_evidence.clear()
 	unbanked = false
 	case_accepted = false
 	armed = false
@@ -1246,9 +1730,13 @@ func store_progress() -> void:
 func banked_evidence() -> Array:
 	var banked := evidence.duplicate()
 	if unbanked:
-		banked[2] = false
-		if chapter == 0:
-			banked[1] = false
+		for index in pending_evidence:
+			banked[index] = false
+		# Preserve the original office evidence rule for older callers.
+		if chapter in [0, 1]:
+			banked[2] = false
+			if chapter == 0:
+				banked[1] = false
 	return banked
 
 
@@ -1288,10 +1776,8 @@ func dev_key(code: Key) -> void:
 			dev_god = not dev_god
 			say("开发者：无敌 %s（追债人碰到不结算）" % ("开" if dev_god else "关"))
 		KEY_F6:
-			if boss_live:
-				boss_live = false
-				boss.hide()
-				boss_route.clear()
+			if boss_live or not extra_hunters.is_empty():
+				stop_dusk_chase()
 				say("开发者：追债人已撤回。")
 			else:
 				activate_boss(station.RELAY)
@@ -1334,6 +1820,7 @@ func dev_spots() -> Array:
 
 
 func dev_teleport() -> void:
+	stop_dusk_chase()
 	var spots := dev_spots()
 	dev_spot = (dev_spot + 1) % spots.size()
 	var target: Vector2i = spots[dev_spot][1]

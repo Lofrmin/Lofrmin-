@@ -23,12 +23,7 @@ func run() -> void:
 	var gate_path: Array[Vector2i] = game.station.path(1, game.station.cell(game.boss.position), game.station.GATES[0])
 	check(game.station.walkable(1, game.station.cell(game.boss.position)), "hunter spawn is on a walkable Dusk tile")
 	var spawn_tile: Vector2i = game.station.cell(game.boss.position)
-	var spawn_comes_from_patrol_route := false
-	for anchor in [game.station.LAB, game.station.LEDGER, game.station.RELAY, game.station.OFFICE]:
-		var route: Array[Vector2i] = game.station.path(1, game.station.GATES[0], anchor)
-		if route.size() >= 9 and route[mini(10, route.size() - 1)] == spawn_tile:
-			spawn_comes_from_patrol_route = true
-	check(spawn_comes_from_patrol_route, "hunter spawn is a reachable waypoint along an authored patrol route")
+	check(gate_path.size() >= 9 and game.boss.position.distance_to(game.player.position) >= 28.0, "random spawn is safely reachable and distant")
 	check(gate_path.size() >= 8, "first spawn is not on top of the entry gate")
 	var grace_value: Variant = game.get("dusk_grace")
 	var grace_used: Variant = game.get("dusk_grace_used")
@@ -91,16 +86,16 @@ func run() -> void:
 	game.shift(game.station.GATES[0])
 	var morning_position: Vector3 = game.boss.position
 	game.update_boss(0.3, false)
-	check(game.boss_live and game.boss_phase == 1 and not game.boss.visible, "normal Morning keeps a hidden Dusk encounter alive")
+	check(not game.boss_live and not game.boss_chasing and not game.boss.visible and game.boss_route.is_empty(), "Morning clears the Dusk encounter under v7 safety rules")
 	check(game.boss.position == morning_position, "hunter freezes instead of crossing into Morning")
-	check(is_equal_approx(game.stunned, 0.7) and is_equal_approx(game.charge_recovery, 2.2), "Morning freezes stun and attack recovery instead of resetting them")
+	check(is_zero_approx(game.stunned) and is_zero_approx(game.charge_warning) and is_zero_approx(game.charge_time), "Morning clears active chase effects")
 	check(game.charges == stored_charges, "phase travel never restores pulse charges")
 	check(is_equal_approx(game.dusk_grace, 0.4) and game.dusk_grace_used, "leaving Dusk preserves the consumed grace state")
 	game.shift_cooldown = 0.0
 	game.shift(game.station.GATES[1])
-	check(game.phase == 1 and game.boss.position == morning_position, "re-entering Dusk keeps the same patrol position")
+	check(game.phase == 1 and game.boss_live and game.boss_phase == 1 and game.station.walkable(1, game.station.cell(game.boss.position)), "re-entering Dusk deploys a valid patrol after Morning safety cleanup")
 	check(is_equal_approx(game.dusk_grace, 0.4), "a repeated gate crossing cannot refresh entry grace")
-	check(game.charges == stored_charges and is_equal_approx(game.stunned, 0.7), "gate toggling cannot reset pulse or stun")
+	check(game.charges == stored_charges, "gate toggling cannot restore pulse charges")
 
 	var map_key := InputEventKey.new()
 	map_key.pressed = true
@@ -135,18 +130,18 @@ func run() -> void:
 	game.boss_phase = 1
 	game.boss.position = first_spawn
 	game.begin_upload()
-	var upload_cell: Vector2i = game.station.cell(game.boss.position)
-	var upload_path: Array[Vector2i] = game.station.path(0, upload_cell, game.station.AUDIT)
 	check(is_equal_approx(game.upload, 6.0), "final upload still lasts six seconds")
-	check(game.boss_live and game.boss_phase == 0, "upload alone re-deploys the hunter into Morning")
-	check(game.boss_delay > 0.0 and game.boss_delay <= 0.6, "upload encounter has a short warning delay")
-	check(upload_path.size() >= 5 and game.station.walkable(0, upload_cell), "upload hunter enters at a reachable point on the shortest route")
-	check(game.boss.position.distance_to(game.player.position) >= 12.0, "upload hunter does not spawn on the player")
-	check(not upload_path.is_empty(), "upload hunter starts on a valid Morning route to A-01")
-	game.boss_live = true
-	var upload_position: Vector3 = game.boss.position
+	check(not game.boss_live and not game.boss_chasing and not game.boss.visible, "upload keeps Morning free of hunters")
+	check(game.boss_route.is_empty() and is_zero_approx(game.threat), "upload clears chase routes and HUD threat")
+	check(not game.sound.chase.playing, "upload does not start chase ambience")
+	game.upload = 4.5
+	game.set_mode("audit")
 	game.begin_upload()
-	check(game.boss.position == upload_position and is_equal_approx(game.upload, 6.0), "upload cannot be restarted to reposition or reset its clock")
+	check(is_equal_approx(game.upload, 4.5), "upload cannot be restarted to reset its clock")
+	game.set_mode("world")
+	game.shift_cooldown = 0.0
+	game.shift(game.station.GATES[0])
+	check(game.phase == 0, "final upload cannot move into Dusk")
 
 	game.free()
 	await process_frame
