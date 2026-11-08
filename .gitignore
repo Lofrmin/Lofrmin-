@@ -5,6 +5,7 @@ backups/
 build/
 dist/
 /assets/cinematics/prologue-v1/
+/assets/cinematics/ending-v1/
 preview*.png
 preview*.png.import
 *.log

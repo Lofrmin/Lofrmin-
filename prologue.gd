@@ -5,6 +5,7 @@ signal finished
 const STREAM_PATH := "res://assets/cinematics/prologue.ogv"
 
 var stream_path := STREAM_PATH
+var skip_caption := "Space / Esc  跳过先导片"
 var video: VideoStreamPlayer
 var skip_button: Button
 var playing := false
@@ -31,7 +32,7 @@ func _ready() -> void:
 	video.finished.connect(finish)
 	frame.add_child(video)
 	skip_button = Button.new()
-	skip_button.text = "Space / Esc  跳过先导片"
+	skip_button.text = skip_caption
 	skip_button.focus_mode = Control.FOCUS_NONE
 	var font := SystemFont.new()
 	font.font_names = ["Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC"]

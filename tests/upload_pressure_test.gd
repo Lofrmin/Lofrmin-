@@ -44,7 +44,9 @@ func run() -> void:
 		check(not game.boss_live and not game.boss_chasing and not game.sound.chase.playing, "Morning stays safe at tick %d" % i)
 	check(not game.cleared and game.upload > 0.0, "upload cannot finish before six seconds")
 	game.tick_game_physics(0.11)
-	check(game.cleared and game.mode == "ending" and game.laps == before, "stationary player completes safe upload at six seconds")
+	check(game.cleared and game.mode == "epilogue" and game.laps == before, "stationary player completes upload and starts ending movie")
+	game.epilogue.finish()
+	check(game.mode == "ending", "movie returns to the completion receipt")
 	game.free()
 	await process_frame
 	print("UPLOAD_SAFETY_TEST: %d checks / %d failures" % [checks, failures.size()])

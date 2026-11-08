@@ -79,6 +79,7 @@ var charges := 2
 var threat := 0.0
 var case_accepted := false
 var cleared := false
+var echo_run := false
 var evidence: Array = [false, false, false]
 var alignment_fields: Array[String] = []
 var timeline_seconds := ""
@@ -114,6 +115,7 @@ var tactic_gate := 0
 var tactic_source := "rules"
 var sound: Node
 var prologue: CanvasLayer
+var epilogue: CanvasLayer
 var optics: ShaderMaterial
 
 
@@ -238,7 +240,7 @@ func update_opening(delta: float) -> void:
 
 
 func has_progress() -> bool:
-	return chapter > 0 or laps > 1 or evidence.has(true) or solved or cleared
+	return chapter > 0 or laps > 1 or evidence.has(true) or solved or cleared or echo_run
 
 
 func begin_intro() -> void:
@@ -261,6 +263,41 @@ func begin_prologue() -> void:
 func finish_prologue() -> void:
 	if mode == "cinematic":
 		begin_intro()
+
+
+func begin_epilogue() -> void:
+	if not cleared:
+		return
+	if epilogue == null:
+		epilogue = Prologue.new()
+		epilogue.stream_path = "res://assets/cinematics/epilogue.ogv"
+		epilogue.skip_caption = "Space / Esc  跳过结尾动画"
+		add_child(epilogue)
+		epilogue.finished.connect(finish_epilogue)
+	set_mode("epilogue")
+	if not epilogue.play():
+		finish_epilogue()
+
+
+func finish_epilogue() -> void:
+	if mode == "epilogue":
+		set_mode("ending")
+
+
+func begin_echo_case() -> void:
+	if mode != "ending" or not cleared:
+		return
+	fresh_investigation = true
+	echo_run = true
+	chapter = 0
+	laps = 0
+	evidence = [false, false, false]
+	cleared = false
+	solved = false
+	boss_live = false
+	tactic = "patrol"
+	tactic_source = "rules"
+	reset_lap("回声调查 / 审计匣重建：回到 B-17，那封遗书是你留给自己的。")
 
 
 func advance_intro() -> void:
@@ -316,14 +353,14 @@ func _physics_process(delta: float) -> void:
 		if upload <= 0.0 and mode == "world" and patched:
 			cleared = true
 			store_progress()
-			set_mode("ending")
-			sound.cue("success")
+			begin_epilogue()
 
 
 func _input(event: InputEvent) -> void:
-	if mode == "cinematic":
+	if mode in ["cinematic", "epilogue"]:
 		if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode in [KEY_SPACE, KEY_ESCAPE]:
-			prologue.finish()
+			if mode == "cinematic": prologue.finish()
+			else: epilogue.finish()
 			get_viewport().set_input_as_handled()
 		return
 	if event is InputEventMouseMotion and mode == "world" and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
@@ -439,6 +476,7 @@ func handle_action(action: String) -> void:
 				set_mode("restart_confirm")
 			else:
 				fresh_investigation = true
+				echo_run = false
 				begin_prologue()
 		"intro_next": advance_intro()
 		"controls":
@@ -462,7 +500,9 @@ func handle_action(action: String) -> void:
 				update_witness()
 				set_mode("world")
 				say("已复核 A-42。按 R 重新进入本轮，或去暮区查看执行结果。")
-		"loop": reset_lap("站外：收到。告诉我还有谁。")
+		"loop": begin_echo_case()
+		"replay_ending":
+			if mode == "ending": begin_epilogue()
 		"restart_prompt":
 			restart_return = mode
 			set_mode("restart_confirm")
@@ -470,6 +510,7 @@ func handle_action(action: String) -> void:
 		"restart_case":
 			if mode == "restart_confirm":
 				fresh_investigation = true
+				echo_run = false
 				chapter = 0
 				laps = 0
 				evidence = [false, false, false]
@@ -497,7 +538,9 @@ func handle_action(action: String) -> void:
 func set_mode(next: String) -> void:
 	if mode == "cinematic" and next != "cinematic" and prologue != null:
 		prologue.stop()
-	get_viewport().disable_3d = next == "cinematic"
+	if mode == "epilogue" and next != "epilogue" and epilogue != null:
+		epilogue.stop()
+	get_viewport().disable_3d = next in ["cinematic", "epilogue"]
 	boss_rig.animation.active = next == "world" and boss_live and boss.visible
 	for hunter in extra_hunters:
 		hunter.rig.animation.active = next == "world" and hunter.live and hunter.visible
@@ -519,7 +562,10 @@ func start_game() -> void:
 	spawn_at_desk()
 	set_mode("ending" if cleared else "world")
 	if not cleared:
-		say("站内广播：林岑失联。先去晨区 B-17 核对门禁记录。" if not has_progress() else "审计匣已载入。" + objective())
+		if echo_run:
+			say("回声调查 / 审计匣重建：回到 B-17。那封遗书，是你写给下一轮的提醒。")
+		else:
+			say("站内广播：林岑失联。先去晨区 B-17 核对门禁记录。" if not has_progress() else "审计匣已载入。" + objective())
 
 
 func spawn_at_desk() -> void:
@@ -992,7 +1038,7 @@ func inspect_office() -> void:
 				evidence[2] = true
 				unbanked = true
 				sound.cue("collect")
-				say("遗书：下次接到任务时，先别按确认。警告，清算外骨骼已启动。")
+				say("你认出了自己的笔迹：下次接到任务时，先别按确认。警告，清算外骨骼已启动。" if echo_run else "遗书：下次接到任务时，先别按确认。警告，清算外骨骼已启动。")
 				pending_evidence.append_array([1, 2])
 				deploy_after_submission()
 			else:
@@ -1097,7 +1143,10 @@ func chapter_title() -> String:
 func evidence_lines() -> Array:
 	var lines := []
 	for index in range(3):
-		lines.append(RECORDS[chapter][index] if evidence[index] else "未取得 · 记录 %02d" % (index + 1))
+		if echo_run and chapter == 0 and index == 2 and evidence[index]:
+			lines.append("你的回执背面：下次接到任务时，先别按确认。")
+		else:
+			lines.append(RECORDS[chapter][index] if evidence[index] else "未取得 · 记录 %02d" % (index + 1))
 	return lines
 
 
@@ -1543,7 +1592,7 @@ func save_label() -> String:
 
 
 func store_progress() -> void:
-	profile.save_state({"chapter": chapter, "laps": laps, "evidence": banked_evidence(), "solved": solved, "cleared": cleared})
+	profile.save_state({"chapter": chapter, "laps": laps, "evidence": banked_evidence(), "solved": solved, "cleared": cleared, "echo_run": echo_run})
 
 
 func banked_evidence() -> Array:
@@ -1569,6 +1618,7 @@ func apply_profile(data: Dictionary) -> void:
 	evidence = data.get("evidence", [false, false, false]).duplicate()
 	solved = bool(data.get("solved", false))
 	cleared = bool(data.get("cleared", false))
+	echo_run = bool(data.get("echo_run", false))
 	update_witness()
 	if cleared and mode == "world" and time_in_lap < 0.3:
 		set_mode("ending")

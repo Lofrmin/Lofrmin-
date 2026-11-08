@@ -1,6 +1,7 @@
 extends Control
 
 const MENU_COVER := preload("res://assets/ui/menu_cover.png")
+const ENDING_COVER := preload("res://assets/ui/ending_cover.png")
 const MINT := Color("a7dcd0")
 const AMBER := Color("edbe87")
 const WHITE := Color("eeeee7")
@@ -38,9 +39,11 @@ func _draw() -> void:
 	pointer = get_global_mouse_position() * Vector2(1280, 720) / size
 	if game.mode in ["menu", "intro"] or (game.mode == "controls" and game.controls_return == "menu") or (game.mode == "restart_confirm" and game.restart_return == "menu"):
 		draw_menu_cover()
+	elif game.mode == "ending" or (game.mode == "restart_confirm" and game.restart_return == "ending"):
+		draw_menu_cover(ENDING_COVER)
 	draw_set_transform(Vector2.ZERO, 0.0, size / Vector2(1280, 720))
 	match game.mode:
-		"cinematic": pass
+		"cinematic", "epilogue": pass
 		"menu": draw_menu()
 		"controls": draw_controls()
 		"intro": draw_intro()
@@ -50,13 +53,13 @@ func _draw() -> void:
 		_: draw_hud()
 
 
-func draw_menu_cover() -> void:
+func draw_menu_cover(texture: Texture2D = MENU_COVER) -> void:
 	# Crop from the center to fill the window without stretching the supplied art.
-	var image_size := MENU_COVER.get_size()
+	var image_size := texture.get_size()
 	var scale_factor := maxf(size.x / image_size.x, size.y / image_size.y)
 	var source_size := size / scale_factor
 	var source := Rect2((image_size - source_size) * 0.5, source_size)
-	draw_texture_rect_region(MENU_COVER, Rect2(Vector2.ZERO, size), source)
+	draw_texture_rect_region(texture, Rect2(Vector2.ZERO, size), source)
 
 
 func write(at: Vector2, message: String, font_size: int, color: Color = WHITE) -> void:
@@ -129,7 +132,7 @@ func draw_menu() -> void:
 		button(Rect2(65,477,190,43), "controls", "H  操作说明", DIM)
 		button(Rect2(269,477,126,43), "quit", "Q  退出", DIM)
 		write(Vector2(65,561), "已归档：" + game.chapter_title(), 17)
-		write(Vector2(65,590), "继续调查会回到 A-01，保留已归档证据。", 14, DIM)
+		write(Vector2(65,590), "回声调查 · 回到 B-17，重新看那封遗书。" if game.echo_run else "继续调查会回到 A-01，保留已归档证据。", 14, DIM)
 	else:
 		button(Rect2(65,420,330,45), "controls", "H  操作说明", DIM)
 		button(Rect2(65,478,330,43), "quit", "Q  退出", DIM)
@@ -502,15 +505,19 @@ func draw_keypad(accent: Color) -> void:
 
 
 func draw_ending() -> void:
-	draw_rect(Rect2(0, 0, 1280, 720), Color(0.02, 0.04, 0.07, 0.69))
-	slab(Rect2(79, 110, 1122, 471), MINT)
-	write(Vector2(115, 166), "R-03  /  站外回执已收到", 21, MINT)
-	write(Vector2(115, 254), "收到。告诉我还有谁。", 54)
-	write(Vector2(115, 340), "广播再次让你去找林岑。你还坐在调查台前。", 24, DIM)
-	write(Vector2(115, 387), "你的左手握着已经传出去的那份账本的回执。", 24, DIM)
-	button(Rect2(115, 495, 232, 48), "loop", "Enter  再走一圈")
-	button(Rect2(369, 495, 185, 48), "quit", "保存后退出")
-	button(Rect2(576, 495, 185, 48), "restart_prompt", "重新开始调查", DIM)
+	draw_rect(Rect2(0, 0, 1280, 720), Color(0.01, 0.025, 0.035, 0.40))
+	slab(Rect2(48, 90, 1184, 540), MINT, 0.89)
+	code(Vector2(77, 142), "E-7 / EXTERNAL AUDIT RECEIPT", 13, MINT)
+	write(Vector2(74, 215), "环没有断，真相已出站。", 43)
+	write(Vector2(77, 284), "林岑存活，历史扣款保留。受益账户冻结，后续清算终止。", 22, WHITE)
+	write(Vector2(77, 329), "空间站仍在晨暮之间闭合。B-17 的遗书，是你的笔迹。", 22, DIM)
+	write(Vector2(77, 403), "这一次，带着回执回到起点。", 30, MINT)
+	write(Vector2(78, 447), "同一扇门、同一封遗书，已经有了另一面的含义。", 17, DIM)
+	button(Rect2(77, 490, 350, 48), "loop", "Enter  带着真相再走一圈")
+	button(Rect2(443, 490, 226, 48), "replay_ending", "重看结尾动画", DIM)
+	button(Rect2(685, 490, 182, 48), "quit", "保存后退出", DIM)
+	button(Rect2(883, 490, 288, 48), "restart_prompt", "重新开始调查", DIM)
+	write(Vector2(78, 585), "回声调查将从第 01 章重建归档记录。广播会重播，你已经认得自己的笔迹。", 16, DIM)
 
 
 func draw_restart() -> void:

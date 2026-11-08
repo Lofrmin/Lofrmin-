@@ -4,7 +4,7 @@ signal loaded(data: Dictionary)
 signal tactic_ready(lap: int, strategy: String, gate: int, source: String)
 
 const SAVE_PATHS := ["user://audit-0.json", "user://audit-1.json"]
-const DEFAULT_STATE := {"chapter": 0, "laps": 1, "evidence": [false, false, false], "solved": false, "cleared": false}
+const DEFAULT_STATE := {"chapter": 0, "laps": 1, "evidence": [false, false, false], "solved": false, "cleared": false, "echo_run": false}
 
 var status := "存档  /  正在读取审计匣"
 var player_id := ""
@@ -73,7 +73,7 @@ func valid_snapshot(document: Dictionary) -> bool:
 
 func normalize(contents: Dictionary) -> Dictionary:
 	return {"chapter": int(contents.chapter), "laps": int(contents.laps), "evidence": contents.evidence,
-		"solved": bool(contents.get("solved", false)), "cleared": bool(contents.get("cleared", false))}
+		"solved": bool(contents.get("solved", false)), "cleared": bool(contents.get("cleared", false)), "echo_run": bool(contents.get("echo_run", false))}
 
 
 func save_url() -> String:
