@@ -1,0 +1,6 @@
+data/
+dist/
+outputs/
+*.zip
+official.html
+.env
