@@ -1,3 +1,4 @@
+import {upgrade,visiblePost,domainSnapshot,domainRoute,teacherReminders} from './domain.mjs';
 const uid=()=>crypto.randomUUID();
 const now=()=>new Date().toISOString();
 const ago=d=>new Date(Date.now()-d*86400000).toISOString();
@@ -21,9 +22,10 @@ function log(s,u,action,target){s.audit.unshift({id:uid(),actor:u.name,action,ta
 function canPost(u,p){return u.role==='staff'||u.role==='donor'&&p.status==='published'&&p.teamIds.some(id=>u.teamIds.includes(id))}
 function reminderList(s){return s.users.filter(u=>u.role==='teacher').map(u=>{const last=s.checkins.filter(c=>c.userId===u.id).sort((a,b)=>b.createdAt.localeCompare(a.createdAt))[0];const days=Math.floor((Date.now()-Date.parse(last?.createdAt||u.createdAt))/86400000);return {...safeUser(u),lastAt:last?.createdAt,days,followups:s.followups.filter(f=>f.teacherId===u.id)}}).filter(u=>u.days>=s.settings.reminderDays)}
 function snapshot(s,u){
+ const domain=domainSnapshot(s,u);
  const staff=u.role==='staff',teacher=u.role==='teacher';
- const teams=staff||teacher?s.teams:s.teams.filter(t=>u.teamIds.includes(t.id));
- return {user:safeUser(u),teams,users:staff?s.users.map(safeUser):teacher?s.users.filter(x=>x.role==='teacher').map(safeUser):[],checkins:staff||teacher?s.checkins:[],posts:s.posts.filter(p=>canPost(u,p)),invites:staff?s.invites:[],notifications:s.notifications.filter(n=>n.userId===u.id),reminders:staff?reminderList(s):[],audit:staff?s.audit:[],settings:staff?s.settings:{},demo:true};
+ const teams=s.teams.filter(t=>domain.schools.some(x=>x.id===t.id));
+ return {user:safeUser(u),teams,users:staff?s.users.map(safeUser):teacher?s.users.filter(x=>x.role==='teacher').map(safeUser):[],checkins:staff||teacher?s.checkins:[],posts:s.posts.map(p=>visiblePost(s,u,p)).filter(Boolean),invites:staff?s.invites:[],notifications:s.notifications.filter(n=>n.userId===u.id&&(!n.postId||s.posts.some(p=>p.id===n.postId&&visiblePost(s,u,p)))),reminders:staff?teacherReminders(s):[],audit:staff?s.audit:[],settings:staff?s.settings:{},demo:true,...domain};
 }
 const string=(x,max=500)=>typeof x==='string'?x.trim().slice(0,max):'';
 function idsValid(s,ids){return Array.isArray(ids)&&ids.length>0&&ids.every(id=>s.teams.some(t=>t.id===id))}
@@ -41,7 +43,7 @@ export async function api(request,store,media){
   let body={};if(!['GET','HEAD'].includes(method)){const raw=await request.text();if(raw.length>7*1024*1024)fail('请求过大',413);try{body=raw?JSON.parse(raw):{}}catch{fail('请求格式不正确')}}
   let extraHeaders={};
   const result=await store.update(async s=>{
-   s.sessions=s.sessions.filter(x=>x.expires>Date.now());
+   upgrade(s);s.sessions=s.sessions.filter(x=>x.expires>Date.now());
    const token=(request.headers.get('cookie')||'').match(/(?:^|;\s*)weiai_session=([^;]+)/)?.[1];
    const session=s.sessions.find(x=>x.token===token),u=s.users.find(x=>x.id===session?.userId);
    const requireRole=(...roles)=>{if(!u)fail('请先登录',401);if(!roles.includes(u.role))fail('没有操作权限',403)};
@@ -60,19 +62,21 @@ export async function api(request,store,media){
     if(s.users.some(x=>x.username===username))fail('账号已存在');
     if(typeof body.password!=='string'||body.password.length<8||body.password.length>128)fail('密码需为 8–128 位');
     const user={id:uid(),username,name,role:invite.role,teamId:invite.role==='teacher'?invite.teamIds[0]:null,teamIds:invite.role==='donor'?invite.teamIds:[],password:await passwordHash(body.password),createdAt:now()};
-    s.users.push(user);invite.usedAt=now();invite.usedBy=user.id;log(s,user,'使用邀请码加入',invite.code);return {ok:true};
+    s.users.push(user);if(user.role==='teacher')s.assignments.push(...s.classrooms.filter(c=>c.schoolId===user.teamId).slice(0,1).map(c=>({userId:user.id,classroomId:c.id})));else {const sp={id:'sponsor-'+user.id,name:user.name,userIds:[user.id]};s.sponsors.push(sp);s.sponsorships.push(...s.classrooms.filter(c=>user.teamIds.includes(c.schoolId)).map(c=>({id:crypto.randomUUID(),sponsorId:sp.id,classroomId:c.id,active:true,startAt:'',endAt:'',historyFrom:''})));}invite.usedAt=now();invite.usedBy=user.id;log(s,user,'使用邀请码加入',invite.code);return {ok:true};
    }
    if(!u)fail('请先登录',401);
+   const domainResult=await domainRoute(s,u,path,method,body,passwordHash);if(domainResult!==undefined)return domainResult;
    if(path==='/api/state'&&method==='GET')return snapshot(s,u);
    if(path==='/api/logout'&&method==='POST'){s.sessions=s.sessions.filter(x=>x.token!==token);extraHeaders['Set-Cookie']='weiai_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0';return {ok:true}}
    if(path==='/api/checkins'&&method==='POST'){
     requireRole('teacher');
-    if(s.checkins.some(c=>c.userId===u.id&&day(c.createdAt)===day(now())))fail('今天已经打卡，明天继续记录吧');
+    const roomId=body.classroomId||s.assignments.find(a=>a.userId===u.id)?.classroomId;const classroom=s.classrooms.find(c=>c.id===roomId);if(!classroom||!s.assignments.some(a=>a.userId===u.id&&a.classroomId===roomId))fail('请选择您任教的教室',403);
+    if(s.checkins.some(c=>c.userId===u.id&&(c.classroomId||'room-'+c.teamId)===roomId&&day(c.createdAt)===day(now())))fail('今天已经打卡，明天继续记录吧');
     const title=string(body.title,100),text=string(body.text,4000),images=Array.isArray(body.images)?body.images:[];
     if(!title||!text||!images.length||images.length>9||images.some(x=>!/^\/media\/[\w.-]+$/.test(x)))fail('请填写标题、课堂记录并上传 1–9 张照片');
     if(body.consent!==true)fail('请确认素材已获得使用授权');
     if(!Number.isInteger(body.students)||body.students<1||body.students>1000||!Number.isInteger(body.minutes)||body.minutes<1||body.minutes>480)fail('请填写有效的参与人数和课堂时长');
-    s.checkins.unshift({id:uid(),userId:u.id,teamId:u.teamId,title,text,images,students:body.students,minutes:body.minutes,consent:true,createdAt:now(),likes:[],reviewed:false});log(s,u,'提交课堂打卡',u.teamId);return {ok:true};
+    s.checkins.unshift({id:uid(),userId:u.id,teamId:classroom.schoolId,classroomId:roomId,category:string(body.category,50)||'日常课堂',activityAt:day(now()),title,text,images,students:body.students,minutes:body.minutes,consent:true,createdAt:now(),likes:[],reviewed:false});log(s,u,'提交课堂打卡',u.teamId);return {ok:true};
    }
    if(path.match(/^\/api\/checkins\/[^/]+\/like$/)&&method==='POST'){
     requireRole('teacher','staff');const c=s.checkins.find(c=>c.id===path.split('/')[3]);if(!c)fail('打卡不存在',404);c.likes=c.likes.includes(u.id)?c.likes.filter(id=>id!==u.id):[...c.likes,u.id];return {ok:true};
@@ -96,6 +100,7 @@ export async function api(request,store,media){
    }
    if(path==='/api/invites'&&method==='POST'){
     requireRole('staff');if(!['teacher','donor'].includes(body.role)||!idsValid(s,body.teamIds)||body.role==='teacher'&&body.teamIds.length!==1)fail('请选择角色及对应团队');
+    if(body.role==='teacher'&&!s.classrooms.some(c=>c.schoolId===body.teamIds[0]))fail('请先为该学校添加教室，再邀请老师');
     const code=uid().replaceAll('-','').slice(0,12).toUpperCase();s.invites.unshift({id:uid(),code,role:body.role,teamIds:body.teamIds,createdAt:now(),expiresAt:new Date(Date.now()+7*86400000).toISOString(),usedAt:null});log(s,u,'创建邀请码',code);return {ok:true,code};
    }
    if(path.match(/^\/api\/invites\/[^/]+\/revoke$/)&&method==='POST'){requireRole('staff');const i=s.invites.find(x=>x.id===path.split('/')[3]);if(!i)fail('邀请码不存在',404);i.revoked=true;log(s,u,'撤销邀请码',i.code);return {ok:true}}
@@ -124,8 +129,8 @@ export async function api(request,store,media){
  }catch(e){return new Response(JSON.stringify({error:e.status?e.message:'服务暂时不可用，请稍后重试'}),{status:e.status||500,headers})}
 }
 export async function authorizeMedia(request,store,id){
- const s=await store.read(),token=(request.headers.get('cookie')||'').match(/(?:^|;\s*)weiai_session=([^;]+)/)?.[1];
+ const s=upgrade(await store.read()),token=(request.headers.get('cookie')||'').match(/(?:^|;\s*)weiai_session=([^;]+)/)?.[1];
  const session=s.sessions.find(x=>x.token===token&&x.expires>Date.now()),u=s.users.find(x=>x.id===session?.userId);if(!u)return false;
  if(u.role==='staff'||u.role==='teacher')return true;
- return s.posts.some(p=>canPost(u,p)&&(p.cover==='/media/'+id||p.blocks.some(b=>b.src==='/media/'+id)));
+ return s.posts.map(p=>visiblePost(s,u,p)).filter(Boolean).some(p=>p.blocks.some(b=>b.src==='/media/'+id));
 }
